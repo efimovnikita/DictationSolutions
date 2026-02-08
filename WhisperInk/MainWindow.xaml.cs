@@ -88,8 +88,7 @@ public partial class MainWindow : Window
             // 1. Получаем путь к AppData\Roaming
             string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
-            // 2. Создаем путь к нашей папке .VoiceHUD (как просили, с точкой)
-            string configDirectory = Path.Combine(appDataPath, ".VoiceHUD");
+            string configDirectory = Path.Combine(appDataPath, ".WhisperInk");
 
             // 3. Убеждаемся, что папка существует. Если нет - создаем.
             if (!Directory.Exists(configDirectory))
