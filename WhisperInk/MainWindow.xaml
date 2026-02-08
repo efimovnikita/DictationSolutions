@@ -1,7 +1,7 @@
 ﻿<Window x:Class="WhisperInk.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VoiceHUD" Height="60" Width="120"
+        Title="WhisperInk" Height="60" Width="120"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ResizeMode="NoResize" ShowInTaskbar="True"
         WindowStartupLocation="Manual" 
