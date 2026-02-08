@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36915.13 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WhisperInk", "WhisperInk\WhisperInk.csproj", "{521F6619-7B20-4409-AB38-565BC713C537}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{521F6619-7B20-4409-AB38-565BC713C537}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{521F6619-7B20-4409-AB38-565BC713C537}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{521F6619-7B20-4409-AB38-565BC713C537}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{521F6619-7B20-4409-AB38-565BC713C537}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {ED2A4B4E-B523-42C2-8D19-FE95BA9B81A4}
+	EndGlobalSection
+EndGlobal

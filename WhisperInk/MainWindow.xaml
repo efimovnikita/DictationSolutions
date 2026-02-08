@@ -1,0 +1,46 @@
+﻿<Window x:Class="WhisperInk.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceHUD" Height="60" Width="120"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ResizeMode="NoResize" ShowInTaskbar="True"
+        WindowStartupLocation="Manual" 
+        Loaded="Window_Loaded"
+        MouseDown="Window_MouseDown">
+
+    <Grid>
+        <Border x:Name="MainBorder" 
+                Background="#111111" 
+                CornerRadius="15" 
+                BorderBrush="#333333" 
+                BorderThickness="1"
+                Margin="15">
+
+            <!-- КОНТЕКСТНОЕ МЕНЮ -->
+            <Border.ContextMenu>
+                <ContextMenu x:Name="MainContextMenu" Opened="MainContextMenu_Opened">
+                    <!-- Пункты будут добавлены через C# код -->
+                </ContextMenu>
+            </Border.ContextMenu>
+
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.4" Direction="270"/>
+            </Border.Effect>
+
+            <Grid>
+                <TextBlock x:Name="lblStatus" Text="..." Foreground="White" 
+                           HorizontalAlignment="Center" VerticalAlignment="Center" 
+                           FontSize="10" FontWeight="Bold" Opacity="0"/>
+
+                <StackPanel x:Name="HistogramPanel" Orientation="Horizontal" 
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Rectangle x:Name="Bar1" Width="3" Height="3" Fill="#AAAAAA" RadiusX="1.5" RadiusY="1.5" Margin="1.5,0"/>
+                    <Rectangle x:Name="Bar2" Width="3" Height="3" Fill="#AAAAAA" RadiusX="1.5" RadiusY="1.5" Margin="1.5,0"/>
+                    <Rectangle x:Name="Bar3" Width="3" Height="3" Fill="#AAAAAA" RadiusX="1.5" RadiusY="1.5" Margin="1.5,0"/>
+                    <Rectangle x:Name="Bar4" Width="3" Height="3" Fill="#AAAAAA" RadiusX="1.5" RadiusY="1.5" Margin="1.5,0"/>
+                    <Rectangle x:Name="Bar5" Width="3" Height="3" Fill="#AAAAAA" RadiusX="1.5" RadiusY="1.5" Margin="1.5,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
