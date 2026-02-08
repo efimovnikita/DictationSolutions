@@ -1,8 +1,4 @@
-﻿Certainly! Here is a comprehensive and professional **README.md** file for your **WhisperInk** project, written in English.
-
----
-
-# WhisperInk (VoiceHUD)
+﻿# WhisperInk (VoiceHUD)
 
 WhisperInk is a lightweight, minimalist "Voice-to-Text" HUD (Heads-Up Display) for Windows. It allows users to dictate text from anywhere in the OS and have it automatically transcribed and typed into the active window using the Mistral AI API.
 
