@@ -214,6 +214,16 @@ public partial class MainWindow : Window
     private void MainContextMenu_Opened(object sender, RoutedEventArgs e)
     {
         MainContextMenu.Items.Clear();
+
+        var historyItem = new MenuItem { Header = "📜 История..." };
+        historyItem.Click += (_, _) =>
+        {
+            // Открываем окно истории
+            new HistoryWindow().Show();
+        };
+        MainContextMenu.Items.Add(historyItem);
+        MainContextMenu.Items.Add(new Separator());
+
         MainContextMenu.Items.Add(new MenuItem { Header = "Микрофоны:", IsEnabled = false, FontWeight = FontWeights.Bold });
 
         for (int i = 0; i < WaveIn.DeviceCount; i++)
@@ -400,6 +410,12 @@ public partial class MainWindow : Window
             // 5. Вставка результата
             lblStatus.Text = "✓";
             MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(100, 255, 100));
+
+
+            if (!string.IsNullOrWhiteSpace(resultTextToPaste))
+            {
+                HistoryService.Add(resultTextToPaste);
+            }
 
             PlayUiSound(SoundType.Success);
             PasteTextToActiveWindow(resultTextToPaste);
