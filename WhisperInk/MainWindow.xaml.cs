@@ -1,4 +1,6 @@
-﻿using System.Diagnostics;
+﻿using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -11,7 +13,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using NAudio.Wave;
 using Path = System.IO.Path;
 
 namespace WhisperInk;
@@ -65,6 +66,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _animationTimer;
     private readonly Random _rnd = new();
 
+    private enum SoundType { Start, Stop, Success, Error }
+
     private static readonly HttpClient _httpClient = new()
     {
         Timeout = TimeSpan.FromSeconds(60)
@@ -91,6 +94,59 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(50)
         };
         _animationTimer.Tick += AnimationTimer_Tick!;
+    }
+
+    private void PlayUiSound(SoundType type)
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                // Генерируем сигнал программно, чтобы не тащить wav-файлы
+                var signal = new SignalGenerator()
+                {
+                    Gain = 0.15, // Громкость (0.0 - 1.0) - делаем тихим
+                    Type = SignalGeneratorType.Sin
+                };
+
+                ISampleProvider provider = signal;
+                int durationMs = 150;
+
+                switch (type)
+                {
+                    case SoundType.Start:
+                        signal.Frequency = 400; // Низкий тон
+                        signal.FrequencyEnd = 600; // Плавный подъем
+                        signal.Type = SignalGeneratorType.Sweep; // Скольжение частоты
+                        durationMs = 200;
+                        break;
+                    case SoundType.Stop:
+                        signal.Frequency = 600;
+                        signal.FrequencyEnd = 300; // Плавный спуск
+                        signal.Type = SignalGeneratorType.Sweep;
+                        durationMs = 200;
+                        break;
+                    case SoundType.Success:
+                        signal.Frequency = 1000; // Высокий "дзынь"
+                        durationMs = 150;
+                        break;
+                    case SoundType.Error:
+                        signal.Frequency = 150;
+                        signal.Type = SignalGeneratorType.Square; // Резкий звук
+                        durationMs = 300;
+                        break;
+                }
+
+                // Обрезаем звук по длительности
+                var offset = provider.Take(TimeSpan.FromMilliseconds(durationMs));
+
+                using var waveOut = new WaveOutEvent();
+                waveOut.Init(offset);
+                waveOut.Play();
+                while (waveOut.PlaybackState == PlaybackState.Playing) Thread.Sleep(10);
+            }
+            catch { /* Игнорируем ошибки звука, чтобы не ломать основную логику */ }
+        });
     }
 
     private static IntPtr SetHook(LowLevelKeyboardProc proc)
@@ -220,6 +276,8 @@ public partial class MainWindow : Window
     {
         try
         {
+            PlayUiSound(SoundType.Start);
+
             if (_currentMode == RecordingMode.AnalyzeContext)
             {
                 try { Clipboard.Clear(); } catch { }
@@ -269,6 +327,8 @@ public partial class MainWindow : Window
 
         try
         {
+            PlayUiSound(SoundType.Stop);
+
             // 1. Остановка записи
             _waveIn?.StopRecording();
             _waveIn?.Dispose(); _waveIn = null;
@@ -327,6 +387,8 @@ public partial class MainWindow : Window
                 }
                 else
                 {
+                    PlayUiSound(SoundType.Error);
+
                     lblStatus.Text = "AI Error";
                     await Task.Delay(1000);
                     ResetAnimation();
@@ -339,6 +401,7 @@ public partial class MainWindow : Window
             lblStatus.Text = "✓";
             MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(100, 255, 100));
 
+            PlayUiSound(SoundType.Success);
             PasteTextToActiveWindow(resultTextToPaste);
 
             await Task.Delay(1500);
@@ -346,6 +409,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            PlayUiSound(SoundType.Error);
+
             Debug.WriteLine(ex.Message);
             ResetAnimation();
         }
