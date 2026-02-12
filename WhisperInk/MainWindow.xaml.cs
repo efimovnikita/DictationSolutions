@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,46 +16,60 @@ using Path = System.IO.Path;
 
 namespace WhisperInk;
 
-// Класс для структуры JSON
 public class AppConfig
 {
-    public string MistralApiKey { get; set; } = "ВСТАВЬТЕ_ВАШ_КЛЮЧ_СЮДА";
+    public string MistralApiKey { get; set; } = "setup-your-key-here";
 }
 
 public partial class MainWindow : Window
 {
-    // ... (API ключи и константы хука остаются без изменений) ...
-    private string _mistralApiKey = ""; // Теперь не const, а переменная
-    private const string ConfigFileName = "config.json";
-    private const string ApiUrl = "https://api.mistral.ai/v1/audio/transcriptions";
-    private const string ModelName = "voxtral-mini-latest";
+    private enum RecordingMode
+    {
+        None,
+        Inject,         // Ctrl + Win -> Вставка текста
+        AnalyzeContext  // Ctrl + Alt -> Анализ контекста + Генерация
+    }
 
+    private string _mistralApiKey = "";
+    private const string ConfigFileName = "config.json";
+
+    // --- API MISTRAL ---
+    private const string AudioApiUrl = "https://api.mistral.ai/v1/audio/transcriptions";
+    private const string AudioModel = "voxtral-mini-latest";
+
+    private const string ChatApiUrl = "https://api.mistral.ai/v1/chat/completions";
+    private const string ChatModel = "mistral-medium-latest";
+
+    // --- КОДЫ КЛАВИШ ---
     private const int WH_KEYBOARD_LL = 13;
     private const int VK_CONTROL = 0x11;
+    private const int VK_MENU = 0x12; // Alt
     private const int VK_LWIN = 0x5B;
     private const int VK_RWIN = 0x5C;
     private const int VK_V = 0x56;
+    private const int VK_C = 0x43;
     private const uint KEYEVENTF_KEYUP = 0x0002;
 
     private static readonly LowLevelKeyboardProc _proc = HookCallback;
     private static IntPtr _hookID = IntPtr.Zero;
+
     private static bool _isRecording;
+    private static bool _isProcessing; 
+    private static RecordingMode _currentMode = RecordingMode.None;
     private static MainWindow _instance = null!;
 
-    private WaveInEvent _waveIn;
-    private WaveFileWriter _writer;
-    private string _currentFileName;
+    private WaveInEvent? _waveIn;
+    private WaveFileWriter? _writer;
+    private string _currentFileName = "";
 
     private readonly DispatcherTimer _animationTimer;
     private readonly Random _rnd = new();
 
-    // Создаем один экземпляр на всё время работы программы
     private static readonly HttpClient _httpClient = new()
     {
-        Timeout = TimeSpan.FromSeconds(60) // Увеличим таймаут для аудио
+        Timeout = TimeSpan.FromSeconds(60)
     };
 
-    // НОВОЕ: ID выбранного микрофона (по умолчанию 0 - системный дефолт)
     private int _selectedDeviceNumber;
 
     public MainWindow()
@@ -62,10 +77,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         _instance = this;
 
-        // 1. Загрузка конфига ПЕРЕД установкой хуков
         if (!LoadConfig())
         {
-            // Если конфиг только что создан или неверен, закрываемся
             Application.Current.Shutdown();
             return;
         }
@@ -80,129 +93,6 @@ public partial class MainWindow : Window
         _animationTimer.Tick += AnimationTimer_Tick!;
     }
 
-    // --- ЛОГИКА ЗАГРУЗКИ КОНФИГА (ОБНОВЛЕННАЯ ВЕРСИЯ) ---
-    private bool LoadConfig()
-    {
-        try
-        {
-            // 1. Получаем путь к AppData\Roaming
-            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-
-            string configDirectory = Path.Combine(appDataPath, ".WhisperInk");
-
-            // 3. Убеждаемся, что папка существует. Если нет - создаем.
-            if (!Directory.Exists(configDirectory))
-            {
-                Directory.CreateDirectory(configDirectory);
-            }
-
-            // 4. Полный путь к файлу
-            string configPath = Path.Combine(configDirectory, ConfigFileName);
-
-            if (!File.Exists(configPath))
-            {
-                // Создаем дефолтный конфиг
-                var defaultConfig = new AppConfig();
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string jsonString = JsonSerializer.Serialize(defaultConfig, options);
-                File.WriteAllText(configPath, jsonString);
-
-                MessageBox.Show(
-                    $"Файл конфигурации создан в папке AppData:\n{configPath}\n\nПожалуйста, откройте его и вставьте ваш API ключ Mistral.",
-                    "Настройка", MessageBoxButton.OK, MessageBoxImage.Information);
-                return false;
-            }
-
-            // Читаем конфиг
-            string jsonContent = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize<AppConfig>(jsonContent);
-
-            if (config == null || String.IsNullOrWhiteSpace(config.MistralApiKey) ||
-                config.MistralApiKey.Contains("ВСТАВЬТЕ_ВАШ_КЛЮЧ"))
-            {
-                MessageBox.Show("Пожалуйста, укажите корректный API ключ в файле config.json",
-                    "Ошибка ключа", MessageBoxButton.OK, MessageBoxImage.Warning);
-
-                // Открываем папку с конфигом для удобства пользователя
-                Process.Start("explorer.exe", configDirectory);
-                return false;
-            }
-
-            _mistralApiKey = config.MistralApiKey;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("Ошибка чтения config.json: " + ex.Message);
-            return false;
-        }
-    }
-
-    // Позиционирование окна
-    private void Window_Loaded(object sender, RoutedEventArgs e)
-    {
-        var desktopWorkingArea = SystemParameters.WorkArea;
-        Left = desktopWorkingArea.Left + (desktopWorkingArea.Width - Width) / 2;
-        Top = desktopWorkingArea.Bottom - Height - 50;
-    }
-
-    // Перетаскивание
-    private void Window_MouseDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ChangedButton == MouseButton.Left)
-        {
-            DragMove();
-        }
-    }
-
-    // --- ЛОГИКА МЕНЮ (НОВОЕ) ---
-    private void MainContextMenu_Opened(object sender, RoutedEventArgs e)
-    {
-        MainContextMenu.Items.Clear();
-
-        // 1. Заголовок
-        var header = new MenuItem { Header = "Выберите микрофон:", IsEnabled = false, FontWeight = FontWeights.Bold };
-        MainContextMenu.Items.Add(header);
-
-        // 2. Список устройств из NAudio
-        int deviceCount = WaveIn.DeviceCount;
-        for (int i = 0; i < deviceCount; i++)
-        {
-            var caps = WaveIn.GetCapabilities(i);
-            var item = new MenuItem
-            {
-                Header = caps.ProductName, // Имя микрофона
-                Tag = i, // Сохраняем ID устройства
-                IsCheckable = true,
-                IsChecked = i == _selectedDeviceNumber // Ставим галочку, если это текущий
-            };
-            item.Click += MicItem_Click;
-            MainContextMenu.Items.Add(item);
-        }
-
-        // 3. Разделитель
-        MainContextMenu.Items.Add(new Separator());
-
-        // 4. Кнопка выхода
-        var exitItem = new MenuItem { Header = "Закрыть приложение" };
-        exitItem.Click += (_, _) =>
-        {
-            UnhookWindowsHookEx(_hookID);
-            Application.Current.Shutdown();
-        };
-        MainContextMenu.Items.Add(exitItem);
-    }
-
-    private void MicItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is MenuItem item && item.Tag is int deviceId)
-        {
-            _selectedDeviceNumber = deviceId;
-            // При следующем открытии меню галочка перерисуется сама
-        }
-    }
-
-    // ... (Хуки клавиатуры HookCallback остаются без изменений) ...
     private static IntPtr SetHook(LowLevelKeyboardProc proc)
     {
         using (var currentProcess = Process.GetCurrentProcess())
@@ -212,72 +102,146 @@ public partial class MainWindow : Window
         }
     }
 
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    private bool LoadConfig()
+    {
+        try
+        {
+            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string configDirectory = Path.Combine(appDataPath, ".WhisperInk");
 
+            if (!Directory.Exists(configDirectory)) Directory.CreateDirectory(configDirectory);
+
+            string configPath = Path.Combine(configDirectory, ConfigFileName);
+
+            if (!File.Exists(configPath))
+            {
+                var defaultConfig = new AppConfig();
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(configPath, JsonSerializer.Serialize(defaultConfig, options));
+
+                MessageBox.Show($"Конфиг создан: {configPath}", "Настройка", MessageBoxButton.OK, MessageBoxImage.Information);
+                return false;
+            }
+
+            string jsonContent = File.ReadAllText(configPath);
+            var config = JsonSerializer.Deserialize<AppConfig>(jsonContent);
+
+            if (config == null || String.IsNullOrWhiteSpace(config.MistralApiKey) || config.MistralApiKey.Contains("ВСТАВЬТЕ"))
+            {
+                MessageBox.Show("Укажите API ключ в config.json", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Process.Start("explorer.exe", configDirectory);
+                return false;
+            }
+
+            _mistralApiKey = config.MistralApiKey;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Ошибка config.json: " + ex.Message);
+            return false;
+        }
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        var desktop = SystemParameters.WorkArea;
+        Left = desktop.Left + (desktop.Width - Width) / 2;
+        Top = desktop.Bottom - Height - 50;
+    }
+
+    private void Window_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left) DragMove();
+    }
+
+    private void MainContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        MainContextMenu.Items.Clear();
+        MainContextMenu.Items.Add(new MenuItem { Header = "Микрофоны:", IsEnabled = false, FontWeight = FontWeights.Bold });
+
+        for (int i = 0; i < WaveIn.DeviceCount; i++)
+        {
+            var caps = WaveIn.GetCapabilities(i);
+            var item = new MenuItem { Header = caps.ProductName, Tag = i, IsCheckable = true, IsChecked = i == _selectedDeviceNumber };
+            item.Click += (s, _) => { if (s is MenuItem m && m.Tag is int id) _selectedDeviceNumber = id; };
+            MainContextMenu.Items.Add(item);
+        }
+
+        MainContextMenu.Items.Add(new Separator());
+        var exit = new MenuItem { Header = "Выход" };
+        exit.Click += (_, _) => { UnhookWindowsHookEx(_hookID); Application.Current.Shutdown(); };
+        MainContextMenu.Items.Add(exit);
+    }
+
+    // --- ХУК КЛАВИАТУРЫ ---
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0)
         {
             bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             bool winDown = (GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0;
+            bool altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
-            if (ctrlDown && winDown)
+            if (!_isRecording && !_isProcessing)
             {
-                if (!_isRecording)
+                if (ctrlDown && winDown) // Вставка
                 {
+                    _currentMode = RecordingMode.Inject;
+                    _isRecording = true;
+                    Application.Current.Dispatcher.Invoke(() => _instance.StartRecordingProcess());
+                }
+                else if (ctrlDown && altDown) // Анализ
+                {
+                    _currentMode = RecordingMode.AnalyzeContext;
                     _isRecording = true;
                     Application.Current.Dispatcher.Invoke(() => _instance.StartRecordingProcess());
                 }
             }
             else
             {
-                if (_isRecording)
+                if (_currentMode == RecordingMode.Inject && (!ctrlDown || !winDown))
+                {
+                    _isRecording = false;
+                    Application.Current.Dispatcher.Invoke(() => _instance.StopAndTranscribe());
+                }
+                else if (_currentMode == RecordingMode.AnalyzeContext && (!ctrlDown || !altDown))
                 {
                     _isRecording = false;
                     Application.Current.Dispatcher.Invoke(() => _instance.StopAndTranscribe());
                 }
             }
         }
-
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
 
-    // --- ЗАПИСЬ (ОБНОВЛЕНО) ---
+    // --- ЗАПИСЬ ---
     public void StartRecordingProcess()
     {
         try
         {
-            // UI
-            MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(255, 100, 100));
+            if (_currentMode == RecordingMode.AnalyzeContext)
+            {
+                try { Clipboard.Clear(); } catch { }
+                MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(100, 100, 255)); // Синий
+            }
+            else
+            {
+                MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(255, 100, 100)); // Красный
+            }
+
             lblStatus.Opacity = 0;
             HistogramPanel.Visibility = Visibility.Visible;
             _animationTimer.Start();
 
-            // Файл
-            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "MyRecordings");
-            if (!Directory.Exists(folder))
-            {
-                Directory.CreateDirectory(folder);
-            }
+            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "MyRecordings");
+            if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
 
             _currentFileName = Path.Combine(folder, "temp_audio.wav");
 
-            // Аудио
             _waveIn = new WaveInEvent();
-
-            // --- ИСПОЛЬЗУЕМ ВЫБРАННЫЙ МИКРОФОН ---
-            if (_selectedDeviceNumber < WaveIn.DeviceCount)
-            {
-                _waveIn.DeviceNumber = _selectedDeviceNumber;
-            }
-            else
-            {
-                // Если вдруг выбранный микрофон отключили, сбрасываем на 0
-                _selectedDeviceNumber = 0;
-                _waveIn.DeviceNumber = 0;
-            }
-            // -------------------------------------
+            if (_selectedDeviceNumber < WaveIn.DeviceCount) _waveIn.DeviceNumber = _selectedDeviceNumber;
+            else _selectedDeviceNumber = 0;
 
             _waveIn.WaveFormat = new WaveFormat(16000, 1);
             _writer = new WaveFileWriter(_currentFileName, _waveIn.WaveFormat);
@@ -287,56 +251,95 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _isRecording = false;
-            MessageBox.Show("Error mic: " + ex.Message);
+            MessageBox.Show("Mic Error: " + ex.Message);
         }
     }
 
-    // ... (StopAndTranscribe, AnimationTimer_Tick, AnimateBar, ResetAnimation и WinAPI остаются без изменений) ...
-
-    // Для полноты картины приведу нужные методы, чтобы код копировался целиком рабочим:
     private void AnimationTimer_Tick(object sender, EventArgs e)
     {
-        AnimateBar(Bar1);
-        AnimateBar(Bar2);
-        AnimateBar(Bar3);
-        AnimateBar(Bar4);
-        AnimateBar(Bar5);
+        AnimateBar(Bar1); AnimateBar(Bar2); AnimateBar(Bar3); AnimateBar(Bar4); AnimateBar(Bar5);
     }
+    private void AnimateBar(Rectangle bar) => bar.Height = _rnd.Next(3, 15);
 
-    private void AnimateBar(Rectangle bar)
-    {
-        double targetHeight = _rnd.Next(3, 15);
-        bar.Height = targetHeight;
-    }
-
+    // --- ЛОГИКА ОСТАНОВКИ И ОБРАБОТКИ ---
     public async void StopAndTranscribe()
     {
+        if (_isProcessing) return; // Дополнительная защита на случай повторного входа
+        _isProcessing = true;      // <-- Устанавливаем флаг в начале
+
         try
         {
+            // 1. Остановка записи
             _waveIn?.StopRecording();
-            _waveIn?.Dispose();
-            _waveIn = null;
-            _writer?.Close();
-            _writer?.Dispose();
-            _writer = null;
+            _waveIn?.Dispose(); _waveIn = null;
+            _writer?.Close(); _writer?.Dispose(); _writer = null;
 
             _animationTimer.Stop();
             HistogramPanel.Visibility = Visibility.Collapsed;
-            lblStatus.Text = "Thinking...";
+            lblStatus.Text = "Think...";
             lblStatus.Opacity = 1;
-            MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(255, 215, 0));
 
-            string text = await TranscribeAudioAsync(_currentFileName);
-            if (!String.IsNullOrEmpty(text))
+            var mode = _currentMode;
+            string contextText = "";
+
+            // 2. Если режим "AnalyzeContext", копируем контекст
+            if (mode == RecordingMode.AnalyzeContext)
             {
-                MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(100, 255, 100));
-                lblStatus.Text = "✓";
-                PasteTextToActiveWindow(text);
+                SimulateCtrlC();
+                await Task.Delay(300); // Ждем буфер
+
+                try
+                {
+                    if (Clipboard.ContainsText()) contextText = Clipboard.GetText();
+                }
+                catch { /* ignored */ }
             }
-            else
+
+            // 3. Транскрибация голоса (Промт пользователя)
+            string? userPrompt = await TranscribeAudioAsync(_currentFileName);
+
+            if (String.IsNullOrEmpty(userPrompt))
             {
                 lblStatus.Text = "Empty";
+                await Task.Delay(1000);
+                ResetAnimation();
+                _currentMode = RecordingMode.None;
+                return;
             }
+
+            string resultTextToPaste = "";
+
+            // 4. Логика по режимам
+            if (mode == RecordingMode.Inject)
+            {
+                // Просто вставляем то, что надиктовали
+                resultTextToPaste = userPrompt;
+            }
+            else if (mode == RecordingMode.AnalyzeContext)
+            {
+                // Отправляем в Chat Completions (Контекст + Промт)
+                lblStatus.Text = "AI..."; // Индикация работы AI
+                string? aiResponse = await SendChatCompletionAsync(contextText, userPrompt);
+
+                if (!String.IsNullOrEmpty(aiResponse))
+                {
+                    resultTextToPaste = aiResponse;
+                }
+                else
+                {
+                    lblStatus.Text = "AI Error";
+                    await Task.Delay(1000);
+                    ResetAnimation();
+                    _currentMode = RecordingMode.None;
+                    return;
+                }
+            }
+
+            // 5. Вставка результата
+            lblStatus.Text = "✓";
+            MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(100, 255, 100));
+
+            PasteTextToActiveWindow(resultTextToPaste);
 
             await Task.Delay(1500);
             ResetAnimation();
@@ -346,87 +349,131 @@ public partial class MainWindow : Window
             Debug.WriteLine(ex.Message);
             ResetAnimation();
         }
+        finally
+        {
+            _currentMode = RecordingMode.None;
+            _isProcessing = false; // <-- Сбрасываем флаг в самом конце, в блоке finally
+        }
     }
 
     private void ResetAnimation()
     {
         _animationTimer.Stop();
-        Bar1.Height = 3;
-        Bar2.Height = 3;
-        Bar3.Height = 3;
-        Bar4.Height = 3;
-        Bar5.Height = 3;
+        Bar1.Height = 3; Bar2.Height = 3; Bar3.Height = 3; Bar4.Height = 3; Bar5.Height = 3;
         HistogramPanel.Visibility = Visibility.Visible;
         lblStatus.Opacity = 0;
         MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(51, 51, 51));
     }
 
+    // --- API MISTRAL: AUDIO ---
     private async Task<string?> TranscribeAudioAsync(string filePath)
     {
-        if (!File.Exists(filePath))
-        {
-            return null;
-        }
-
-        // Мы НЕ оборачиваем _httpClient в using, так как он живет вечно
+        if (!File.Exists(filePath)) return null;
         try
         {
-            // Заголовки авторизации лучше устанавливать для каждого запроса отдельно, 
-            // если ключ может измениться, или один раз в конструкторе, если он статичен.
-            // Используем HttpRequestMessage для чистоты:
-            using var request = new HttpRequestMessage(HttpMethod.Post, ApiUrl);
+            using var request = new HttpRequestMessage(HttpMethod.Post, AudioApiUrl);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mistralApiKey);
 
             using var content = new MultipartFormDataContent();
-            // Используем Stream вместо ReadAllBytes, это эффективнее для памяти
             using var fileStream = File.OpenRead(filePath);
             var fileContent = new StreamContent(fileStream);
             fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/wav");
 
             content.Add(fileContent, "file", "audio.wav");
-            content.Add(new StringContent(ModelName), "model");
+            content.Add(new StringContent(AudioModel), "model");
 
             request.Content = content;
+            var response = await _httpClient.SendAsync(request);
+            string responseString = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode) return null;
+
+            using var doc = JsonDocument.Parse(responseString);
+            if (doc.RootElement.TryGetProperty("text", out var textElement)) return textElement.GetString();
+        }
+        catch (Exception ex) { Debug.WriteLine($"Network error: {ex.Message}"); }
+        return null;
+    }
+
+    // --- API MISTRAL: CHAT COMPLETIONS ---
+    private async Task<string?> SendChatCompletionAsync(string context, string instruction)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, ChatApiUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mistralApiKey);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            // Формируем контент пользователя
+            string finalContent;
+            if (!string.IsNullOrWhiteSpace(context))
+            {
+                finalContent = $"Context:\n'''\n{context}\n'''\n\nTask: {instruction}";
+            }
+            else
+            {
+                finalContent = instruction;
+            }
+
+            // Добавляем System Prompt для строгости и краткости
+            var payload = new
+            {
+                model = ChatModel,
+                messages = new object[]
+                {
+                    new
+                    {
+                        role = "system",
+                        content = "You are a precise execution engine. Output ONLY the direct result of the task. Do not say 'Here is the translation' or 'Sure'. Do not provide explanations, alternatives, or conversational filler. Just the result."
+                    },
+                    new
+                    {
+                        role = "user",
+                        content = finalContent
+                    }
+                },
+                temperature = 0.3,
+                // top_p = 0.5,
+                // max_tokens = 2048,
+            };
+
+            string jsonBody = JsonSerializer.Serialize(payload);
+            request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.SendAsync(request);
             string responseString = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
+                Debug.WriteLine($"Chat API Error: {response.StatusCode} - {responseString}");
                 return null;
             }
 
             using var doc = JsonDocument.Parse(responseString);
-            if (doc.RootElement.TryGetProperty("text", out var textElement))
+            if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
             {
-                return textElement.GetString();
+                var firstChoice = choices[0];
+                if (firstChoice.TryGetProperty("message", out var message) &&
+                    message.TryGetProperty("content", out var content))
+                {
+                    return content.GetString()?.Trim().Trim('"'); // Trim уберет лишние пробелы/переносы
+                }
             }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Network error: {ex.Message}");
+            Debug.WriteLine($"Chat API Network error: {ex.Message}");
         }
-
         return null;
     }
 
+    // --- UTILS ---
     private void PasteTextToActiveWindow(string text)
     {
-        var staThread = new Thread(() =>
-        {
-            try
-            {
-                Clipboard.SetText(text);
-            }
-            catch
-            {
-                // ignored
-            }
-        });
+        var staThread = new Thread(() => { try { Clipboard.SetText(text); } catch { } });
         staThread.SetApartmentState(ApartmentState.STA);
         staThread.Start();
         staThread.Join();
-
         SimulateCtrlV();
     }
 
@@ -439,6 +486,16 @@ public partial class MainWindow : Window
         keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
     }
 
+    private static void SimulateCtrlC()
+    {
+        Thread.Sleep(150);
+        keybd_event(VK_CONTROL, 0, 0, 0);
+        keybd_event(VK_C, 0, 0, 0);
+        keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+    }
+
+    // --- NATIVE METHODS ---
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
@@ -457,4 +514,6 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 }
