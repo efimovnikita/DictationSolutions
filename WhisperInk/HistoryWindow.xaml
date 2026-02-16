@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:WhisperInk"
         mc:Ignorable="d"
-        Title="История WhisperInk" Height="400" Width="500"
+        Title="History WhisperInk" Height="400" Width="500"
         Background="#1E1E1E" Foreground="White"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize">
@@ -18,7 +18,7 @@
 
         <!-- Заголовок -->
         <Border Background="#2D2D2D" Padding="10">
-            <TextBlock Text="История" FontWeight="Bold" FontSize="14" Foreground="#AAAAAA"/>
+            <TextBlock Text="History" FontWeight="Bold" FontSize="14" Foreground="#AAAAAA"/>
         </Border>
 
         <!-- Список -->
@@ -57,7 +57,7 @@
                                 <Button Content="❐" Width="25" Height="25" 
                                         Click="BtnCopy_Click" Tag="{Binding}"
                                         Background="#333333" Foreground="White" BorderThickness="0"
-                                        ToolTip="Копировать"/>
+                                        ToolTip="Copy"/>
 
                                 <Border Width="5"/>
 
@@ -65,7 +65,7 @@
                                 <Button Content="✕" Width="25" Height="25" 
                                         Click="BtnDelete_Click" Tag="{Binding}"
                                         Background="#333333" Foreground="#FF5555" BorderThickness="0"
-                                        ToolTip="Удалить"/>
+                                        ToolTip="Delete"/>
                             </StackPanel>
                         </Grid>
                     </Border>
