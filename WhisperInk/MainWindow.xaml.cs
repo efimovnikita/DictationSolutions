@@ -236,7 +236,18 @@ public partial class MainWindow : Window
         for (int i = 0; i < WaveIn.DeviceCount; i++)
         {
             var caps = WaveIn.GetCapabilities(i);
-            var item = new MenuItem { Header = caps.ProductName, Tag = i, IsCheckable = true, IsChecked = i == _selectedDeviceNumber };
+            string productName = caps.ProductName;
+            const int maxLength = 30; // Установленный лимит символов для обрезки имени микрофона
+
+            if (productName.Length > maxLength)
+            {
+                int parenthesisIndex = productName.IndexOf('(');
+                if (parenthesisIndex != -1)
+                {
+                    productName = productName.Substring(0, parenthesisIndex).Trim();
+                }
+            }
+            var item = new MenuItem { Header = productName, Tag = i, IsCheckable = true, IsChecked = i == _selectedDeviceNumber };
             item.Click += (s, _) => { if (s is MenuItem m && m.Tag is int id) _selectedDeviceNumber = id; };
             MainContextMenu.Items.Add(item);
         }
