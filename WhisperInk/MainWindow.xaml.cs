@@ -96,8 +96,15 @@ public partial class MainWindow : Window
         _animationTimer.Tick += AnimationTimer_Tick!;
     }
 
+    private bool _isSoundEnabled = true;
+
     private void PlayUiSound(SoundType type)
     {
+        if (!_isSoundEnabled)
+        {
+            return;
+        }
+
         Task.Run(() =>
         {
             try
@@ -215,7 +222,7 @@ public partial class MainWindow : Window
     {
         MainContextMenu.Items.Clear();
 
-        var historyItem = new MenuItem { Header = "📜 История..." };
+        var historyItem = new MenuItem { Header = "📜 History..." };
         historyItem.Click += (_, _) =>
         {
             // Открываем окно истории
@@ -224,7 +231,7 @@ public partial class MainWindow : Window
         MainContextMenu.Items.Add(historyItem);
         MainContextMenu.Items.Add(new Separator());
 
-        MainContextMenu.Items.Add(new MenuItem { Header = "Микрофоны:", IsEnabled = false, FontWeight = FontWeights.Bold });
+        MainContextMenu.Items.Add(new MenuItem { Header = "Microphones:", IsEnabled = false, FontWeight = FontWeights.Bold });
 
         for (int i = 0; i < WaveIn.DeviceCount; i++)
         {
@@ -235,7 +242,16 @@ public partial class MainWindow : Window
         }
 
         MainContextMenu.Items.Add(new Separator());
-        var exit = new MenuItem { Header = "Выход" };
+
+        var soundToggleItem = new MenuItem { Header = "🔊 Sound On/Off", IsCheckable = true, IsChecked = _isSoundEnabled };
+        soundToggleItem.Click += (s, _) =>
+        {
+            if (s is MenuItem m) _isSoundEnabled = m.IsChecked;
+        };
+        MainContextMenu.Items.Add(soundToggleItem);
+
+        MainContextMenu.Items.Add(new Separator());
+        var exit = new MenuItem { Header = "Exit" };
         exit.Click += (_, _) => { UnhookWindowsHookEx(_hookID); Application.Current.Shutdown(); };
         MainContextMenu.Items.Add(exit);
     }
