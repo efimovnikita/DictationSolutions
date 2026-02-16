@@ -20,6 +20,7 @@ namespace WhisperInk;
 public class AppConfig
 {
     public string MistralApiKey { get; set; } = "setup-your-key-here";
+    public bool IsSoundEnabled { get; set; } = true;
 }
 
 public partial class MainWindow : Window
@@ -181,6 +182,7 @@ public partial class MainWindow : Window
                 var defaultConfig = new AppConfig();
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 File.WriteAllText(configPath, JsonSerializer.Serialize(defaultConfig, options));
+                _isSoundEnabled = defaultConfig.IsSoundEnabled; // Initialize sound setting
 
                 MessageBox.Show($"Конфиг создан: {configPath}", "Настройка", MessageBoxButton.OK, MessageBoxImage.Information);
                 return false;
@@ -188,9 +190,11 @@ public partial class MainWindow : Window
 
             string jsonContent = File.ReadAllText(configPath);
             var config = JsonSerializer.Deserialize<AppConfig>(jsonContent);
+            _isSoundEnabled = config.IsSoundEnabled; // Initialize sound setting from loaded config
 
             if (config == null || String.IsNullOrWhiteSpace(config.MistralApiKey) || config.MistralApiKey.Contains("ВСТАВЬТЕ"))
             {
+                _isSoundEnabled = new AppConfig().IsSoundEnabled; // Fallback to default sound setting
                 MessageBox.Show("Укажите API ключ в config.json", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
                 Process.Start("explorer.exe", configDirectory);
                 return false;
@@ -203,6 +207,31 @@ public partial class MainWindow : Window
         {
             MessageBox.Show("Ошибка config.json: " + ex.Message);
             return false;
+        }
+    }
+
+    private void SaveConfig()
+    {
+        try
+        {
+            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string configDirectory = Path.Combine(appDataPath, ".WhisperInk");
+            if (!Directory.Exists(configDirectory)) Directory.CreateDirectory(configDirectory);
+
+            string configPath = Path.Combine(configDirectory, ConfigFileName);
+
+            var configToSave = new AppConfig
+            {
+                MistralApiKey = _mistralApiKey,
+                IsSoundEnabled = _isSoundEnabled
+            };
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(configPath, JsonSerializer.Serialize(configToSave, options));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Ошибка сохранения конфига: " + ex.Message, "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -257,7 +286,11 @@ public partial class MainWindow : Window
         var soundToggleItem = new MenuItem { Header = "🔊 Sound On/Off", IsCheckable = true, IsChecked = _isSoundEnabled };
         soundToggleItem.Click += (s, _) =>
         {
-            if (s is MenuItem m) _isSoundEnabled = m.IsChecked;
+            if (s is MenuItem m)
+            {
+                _isSoundEnabled = m.IsChecked;
+                SaveConfig(); // Save the new sound setting
+            }
         };
         MainContextMenu.Items.Add(soundToggleItem);
 
