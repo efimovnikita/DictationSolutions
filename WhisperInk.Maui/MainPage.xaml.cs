@@ -2,23 +2,43 @@
 {
     public partial class MainPage : ContentPage
     {
-        int count = 0;
+        // Ключ для хранения API-ключа в настройках
+        public const string ApiKeyPreferenceKey = "MistralApiKey";
 
         public MainPage()
         {
             InitializeComponent();
+            LoadApiKey();
         }
 
-        private void OnCounterClicked(object? sender, EventArgs e)
+        private void LoadApiKey()
         {
-            count++;
+            // Загружаем ключ из хранилища и отображаем в поле ввода
+            var apiKey = Preferences.Get(ApiKeyPreferenceKey, string.Empty);
+            ApiKeyEntry.Text = apiKey;
+        }
 
-            if (count == 1)
-                CounterBtn.Text = $"Clicked {count} time";
+        private void OnSaveClicked(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(ApiKeyEntry.Text))
+            {
+                StatusLabel.Text = "API key cannot be empty.";
+                StatusLabel.TextColor = Colors.Red;
+            }
             else
-                CounterBtn.Text = $"Clicked {count} times";
+            {
+                // Сохраняем ключ в хранилище
+                Preferences.Set(ApiKeyPreferenceKey, ApiKeyEntry.Text);
+                StatusLabel.Text = "API Key saved successfully!";
+                StatusLabel.TextColor = Colors.Green;
+            }
 
-            SemanticScreenReader.Announce(CounterBtn.Text);
+            // Скрываем сообщение через 3 секунды
+            Dispatcher.StartTimer(TimeSpan.FromSeconds(3), () =>
+            {
+                StatusLabel.Text = string.Empty;
+                return false; // Остановить таймер
+            });
         }
     }
 }

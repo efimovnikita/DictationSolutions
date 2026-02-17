@@ -14,6 +14,7 @@ using Color = Android.Graphics.Color;
 using Path = System.IO.Path;
 using View = Android.Views.View;
 using Clipboard = Android.Content.ClipboardManager;
+using Microsoft.Maui.Storage;
 
 namespace WhisperInk.Maui
 {
@@ -22,7 +23,6 @@ namespace WhisperInk.Maui
     public class FloatingButtonService : Service, View.IOnTouchListener
     {
         public const string TAG = "WhisperInkDebug";
-        private const string MistralApiKey = "0Fo6vFq1900BfI8fucvPEoRgXkX7nLHc";
 
         private IWindowManager? _windowManager;
         private ImageView? _floatingButton;
@@ -137,16 +137,20 @@ namespace WhisperInk.Maui
 
         private async Task<string?> TranscribeAudioAsync(byte[] wavFileBytes)
         {
-            if (MistralApiKey.Contains("ВАШ_API_КЛЮЧ"))
+            // Получаем ключ из настроек приложения
+            var mistralApiKey = Preferences.Get("MistralApiKey", string.Empty);
+
+            if (string.IsNullOrEmpty(mistralApiKey))
             {
-                Log.Error(TAG, "API ключ не установлен!");
+                Log.Error(TAG, "API ключ не установлен! Пожалуйста, задайте его в приложении.");
+                ShowToast("API key not set");
                 return null;
             }
 
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.mistral.ai/v1/audio/transcriptions");
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MistralApiKey);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", mistralApiKey);
 
                 using var content = new MultipartFormDataContent();
                 var audioContent = new ByteArrayContent(wavFileBytes);
@@ -161,7 +165,6 @@ namespace WhisperInk.Maui
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    // Теперь мы логируем полный ответ сервера, что очень поможет в отладке
                     Log.Error(TAG, $"Ошибка API: {(int)response.StatusCode} - {responseString}");
                     return null;
                 }
@@ -172,7 +175,6 @@ namespace WhisperInk.Maui
             catch (Exception ex)
             {
                 Log.Error(TAG, $"Сетевая ошибка: {ex.Message}");
-                // Если есть вложенное исключение (часто бывает при проблемах с сетью), тоже его посмотрим
                 if (ex.InnerException != null)
                 {
                     Log.Error(TAG, $"Внутреннее исключение: {ex.InnerException.Message}");
