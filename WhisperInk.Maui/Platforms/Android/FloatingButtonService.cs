@@ -81,57 +81,102 @@ namespace WhisperInk.Maui
 
                 case MotionEventActions.Up:
                     Log.Debug(TAG, ">>> Кнопка ОТПУЩЕНА.");
-                    // Теперь мы сохраняем и обрабатываем запись в любом случае,
-                    // независимо от того, перетаскивали кнопку или нет.
-                    StopAndProcessRecording();
-                    return true;
-            
+
+                    // Запускаем асинхронную задачу в фоне (fire-and-forget), 
+                    // не блокируя возврат true и работу UI
+                    _ = Task.Run(async () => 
+                    {
+                        try 
+                        {
+                            await StopAndProcessRecordingAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(TAG, $"Критическая ошибка при остановке/обработке: {ex.Message}");
+                        }
+                    });
+                    return true; // UI мгновенно "отпускает" кнопку!
+
                 case MotionEventActions.Cancel:
-                    // ДОПОЛНИТЕЛЬНО: Полезно обрабатывать системную отмену 
-                    // (например, если во время записи вам позвонили или вылезло системное окно)
                     Log.Debug(TAG, ">>> Касание ОТМЕНЕНО системой.");
-                    StopRecordingAndDiscard();
-                    return true;
+                    _ = Task.Run(async () => 
+                    {
+                        await StopRecordingAndDiscardAsync();
+                    });
+                    return true;            
             }
+
             return false;
         }
 
-        private void StopRecordingAndDiscard()
+        private async Task StopRecordingAndDiscardAsync() // Сделали метод асинхронным
         {
-            Log.Debug(TAG, "Обнаружено перетаскивание. Запись отменена.");
+            Log.Debug(TAG, "Запись отменена (например, свернули приложение). Удаляем данные.");
+    
             if (!_isRecording) return;
 
+            // 1. Даем сигнал фоновому потоку остановиться
             _isRecording = false;
-            // Не ждем завершения задачи, просто даем команду на остановку
-            _audioRecord?.Stop();
-            _audioRecord?.Release();
-            _audioRecord = null;
 
-            _recordingStream?.Close(); // Закрываем и удаляем поток с данными
+            // 2. ОБЯЗАТЕЛЬНО ждем, пока фоновый цикл while() корректно завершит свой последний круг
+            if (_recordingTask != null)
+            {
+                await _recordingTask; 
+            }
+
+            // 3. Теперь, когда никто не читает и не пишет, безопасно освобождаем ресурсы
+            try
+            {
+                _audioRecord?.Stop();
+                _audioRecord?.Release();
+                _audioRecord = null;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(TAG, $"Ошибка при освобождении микрофона: {ex.Message}");
+            }
+
+            // 4. Уничтожаем записанные данные
+            try
+            {
+                _recordingStream?.Close();
+                _recordingStream?.Dispose(); // Освобождаем память
+                _recordingStream = null;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(TAG, $"Ошибка при закрытии потока: {ex.Message}");
+            }
         }
-
         private void StartRecording()
         {
             if (_isRecording) return;
-            try
+    
+            // Ставим флаг СРАЗУ в UI-потоке, чтобы предотвратить множественные 
+            // одновременные нажатия, пока фоновый поток запускается
+            _isRecording = true; 
+
+            // Отправляем всю работу с железом в фон
+            _recordingTask = Task.Run(() =>
             {
-                // Инициализируем поток в памяти
-                _recordingStream = new MemoryStream();
-
-                var audioSource = AudioSource.Mic;
-                var sampleRate = 16000;
-                var channelConfig = ChannelIn.Mono;
-                var audioFormat = Encoding.Pcm16bit;
-                var bufferSize = AudioRecord.GetMinBufferSize(sampleRate, channelConfig, audioFormat);
-
-                _audioRecord = new AudioRecord(audioSource, sampleRate, channelConfig, audioFormat, bufferSize);
-                _audioRecord.StartRecording();
-                _isRecording = true;
-
-                // Запускаем запись в фоновом потоке
-                _recordingTask = Task.Run(() =>
+                try
                 {
+                    // Инициализируем поток в памяти
+                    _recordingStream = new MemoryStream();
+
+                    var audioSource = AudioSource.Mic;
+                    var sampleRate = 16000;
+                    var channelConfig = ChannelIn.Mono;
+                    var audioFormat = Encoding.Pcm16bit;
+                    var bufferSize = AudioRecord.GetMinBufferSize(sampleRate, channelConfig, audioFormat);
+
+                    // Теперь инициализация железа не тормозит интерфейс
+                    _audioRecord = new AudioRecord(audioSource, sampleRate, channelConfig, audioFormat, bufferSize);
+                    _audioRecord.StartRecording();
+
                     var buffer = new byte[bufferSize];
+            
+                    // Запускаем цикл чтения
                     while (_isRecording)
                     {
                         int read = _audioRecord.Read(buffer, 0, buffer.Length);
@@ -141,17 +186,28 @@ namespace WhisperInk.Maui
                             _recordingStream.Write(buffer, 0, read);
                         }
                     }
-                });
-            }
-            catch (Exception ex) { Log.Error(TAG, $"!!! ОШИБКА StartRecording: {ex.Message}"); }
+                }
+                catch (Exception ex) 
+                { 
+                    Log.Error(TAG, $"!!! ОШИБКА StartRecording: {ex.Message}");
+                    // В случае ошибки сбрасываем флаг, чтобы можно было попробовать снова
+                    _isRecording = false; 
+                }
+            });
         }
-        private async void StopAndProcessRecording()
+
+        private async Task StopAndProcessRecordingAsync()
         {
             if (!_isRecording || _recordingStream == null) return;
 
             // 1. Останавливаем запись
             _isRecording = false;
-            if (_recordingTask != null) await _recordingTask; // Гарантированно дожидаемся завершения потока
+
+            if (_recordingTask != null) 
+            {
+                await _recordingTask; // Гарантированно дожидаемся завершения потока
+            }
+
             _audioRecord?.Stop();
             _audioRecord?.Release();
             _audioRecord = null;
@@ -167,23 +223,26 @@ namespace WhisperInk.Maui
             }
 
             // 3. Создаем WAV-файл в памяти
-            byte[] wavData = WavHelper.CreateWavFile(pcmData, 16000, 1, 16);
+            byte[] wavData = await Task.Run(() => WavHelper.CreateWavFile(pcmData, 16000, 1, 16));
             Log.Debug(TAG, $"WAV-файл создан в памяти, размер: {wavData.Length} байт.");
 
             // 4. Отправляем в API
             string? transcribedText = await TranscribeAudioAsync(wavData);
 
-            // 5. Обрабатываем результат
-            if (!string.IsNullOrEmpty(transcribedText))
+            // 5. Обрабатываем результат (Важно: вызов UI-методов должен быть в главном потоке)
+            MainThread.BeginInvokeOnMainThread(() =>
             {
-                Log.Debug(TAG, $"Получен текст: {transcribedText}");
-                CopyToClipboardAndNotify(transcribedText);
-            }
-            else
-            {
-                Log.Error(TAG, "Не удалось получить текст от API (возможно, пустой ответ).");
-                ShowToast("Ошибка распознавания");
-            }
+                if (!string.IsNullOrEmpty(transcribedText))
+                {
+                    Log.Debug(TAG, $"Получен текст: {transcribedText}");
+                    CopyToClipboardAndNotify(transcribedText);
+                }
+                else
+                {
+                    Log.Error(TAG, "Не удалось получить текст от API (возможно, пустой ответ).");
+                    ShowToast("Ошибка распознавания");
+                }
+            });
         }
 
         private async Task<string?> TranscribeAudioAsync(byte[] wavFileBytes)
@@ -204,14 +263,20 @@ namespace WhisperInk.Maui
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", mistralApiKey);
 
                 using var content = new MultipartFormDataContent();
-                var audioContent = new ByteArrayContent(wavFileBytes);
+        
+                // ИСПРАВЛЕНИЕ 2: Обернули в using, чтобы сразу освобождать память из-под тяжелого массива байтов
+                using var audioContent = new ByteArrayContent(wavFileBytes);
                 audioContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/wav");
-
                 content.Add(audioContent, "file", "audio.wav");
-                content.Add(new StringContent("voxtral-mini-latest"), "model");
+
+                // ИСПРАВЛЕНИЕ 3: Обернули в using текстовый контент
+                using var modelContent = new StringContent("voxtral-mini-latest");
+                content.Add(modelContent, "model");
 
                 request.Content = content;
-                var response = await _httpClient.SendAsync(request);
+        
+                // ИСПРАВЛЕНИЕ 4: Обернули ответ в using
+                using var response = await _httpClient.SendAsync(request);
                 string responseString = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
@@ -219,7 +284,7 @@ namespace WhisperInk.Maui
                     Log.Error(TAG, $"Ошибка API: {(int)response.StatusCode} - {responseString}");
                     return null;
                 }
-        
+
                 using var doc = JsonDocument.Parse(responseString);
                 return doc.RootElement.TryGetProperty("text", out var textElement) ? textElement.GetString() : null;
             }
@@ -236,13 +301,38 @@ namespace WhisperInk.Maui
 
         private void CopyToClipboardAndNotify(string text)
         {
-            // Используем нативный API Android для работы с буфером обмена
-            var clipboardManager = (Clipboard)GetSystemService(ClipboardService);
-            var clipData = ClipData.NewPlainText("WhisperInk Result", text);
-            clipboardManager.PrimaryClip = clipData;
+            // Оборачиваем ВСЁ взаимодействие с UI-контекстом в главный поток
+            if (MainThread.IsMainThread)
+            {
+                ExecuteCopy(text);
+            }
+            else
+            {
+                MainThread.BeginInvokeOnMainThread(() => ExecuteCopy(text));
+            }
+
+            // Вспомогательный локальный метод, чтобы не дублировать код
+            void ExecuteCopy(string textToCopy)
+            {
+                try
+                {
+                    // Используем нативный API Android
+                    var clipboardManager = (Clipboard)GetSystemService(ClipboardService);
+                    var clipData = ClipData.NewPlainText("WhisperInk Result", textToCopy);
             
-            // Показываем всплывающее уведомление
-            ShowToast("Текст скопирован!");
+                    if (clipboardManager != null)
+                    {
+                        clipboardManager.PrimaryClip = clipData;
+                        // Toast тоже вызываем отсюда, он уже умеет обрабатывать потоки
+                        ShowToast("Текст скопирован!");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(TAG, $"Ошибка копирования в буфер: {ex.Message}");
+                    ShowToast("Ошибка при копировании");
+                }
+            }
         }
 
         private void ShowToast(string message)
