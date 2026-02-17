@@ -81,17 +81,16 @@ namespace WhisperInk.Maui
 
                 case MotionEventActions.Up:
                     Log.Debug(TAG, ">>> Кнопка ОТПУЩЕНА.");
-
-                    if (_wasDragged)
-                    {
-                        // Если было перетаскивание, просто останавливаем и отменяем запись
-                        StopRecordingAndDiscard();
-                    }
-                    else
-                    {
-                        // Если перетаскивания не было, обрабатываем запись как обычно
-                        StopAndProcessRecording();
-                    }
+                    // Теперь мы сохраняем и обрабатываем запись в любом случае,
+                    // независимо от того, перетаскивали кнопку или нет.
+                    StopAndProcessRecording();
+                    return true;
+            
+                case MotionEventActions.Cancel:
+                    // ДОПОЛНИТЕЛЬНО: Полезно обрабатывать системную отмену 
+                    // (например, если во время записи вам позвонили или вылезло системное окно)
+                    Log.Debug(TAG, ">>> Касание ОТМЕНЕНО системой.");
+                    StopRecordingAndDiscard();
                     return true;
             }
             return false;
