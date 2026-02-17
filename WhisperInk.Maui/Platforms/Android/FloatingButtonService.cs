@@ -33,6 +33,12 @@ namespace WhisperInk.Maui
         private Task? _recordingTask;
         private MemoryStream? _recordingStream; // <-- Используем MemoryStream вместо пути к файлу
 
+        private int _initialX;
+        private int _initialY;
+        private float _initialTouchX;
+        private float _initialTouchY;
+        private bool _wasDragged = false;
+
         private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
 
         private WindowManagerLayoutParams? _layoutParams; // Вынесли, чтобы менять положение
@@ -41,22 +47,68 @@ namespace WhisperInk.Maui
         
         public bool OnTouch(View? v, MotionEvent? e)
         {
-            if (e == null) return false;
+            if (e == null || _layoutParams == null) return false;
             switch (e.Action)
             {
                 case MotionEventActions.Down:
                     Log.Debug(TAG, ">>> Кнопка НАЖАТА. Начинаем запись...");
-                    _floatingButton?.SetBackgroundColor(Color.Red);
-                    StartRecording(); // <-- НАША НОВАЯ ФУНКЦИЯ
+                    // Сохраняем начальные позиции
+                    _initialX = _layoutParams.X;
+                    _initialY = _layoutParams.Y;
+                    _initialTouchX = e.RawX;
+                    _initialTouchY = e.RawY;
+                    _wasDragged = false; // Сбрасываем флаг перетаскивания
+
+                    StartRecording();
+                    return true;
+
+                case MotionEventActions.Move:
+                    // Рассчитываем смещение от начальной точки касания
+                    var dX = e.RawX - _initialTouchX;
+                    var dY = e.RawY - _initialTouchY;
+
+                    // Порог, чтобы случайное дрожание пальца не считалось перетаскиванием
+                    const float DragThreshold = 10.0f;
+                    if (Math.Abs(dX) > DragThreshold || Math.Abs(dY) > DragThreshold)
+                    {
+                        _wasDragged = true; // Устанавливаем флаг, что это перетаскивание
+                        // Обновляем параметры положения окна
+                        _layoutParams.X = _initialX + (int)dX;
+                        _layoutParams.Y = _initialY + (int)dY;
+                        _windowManager?.UpdateViewLayout(_floatingButton, _layoutParams);
+                    }
                     return true;
 
                 case MotionEventActions.Up:
-                    Log.Debug(TAG, ">>> Кнопка ОТПУЩЕНА. Останавливаем запись...");
-                    _floatingButton?.SetBackgroundColor(Color.ParseColor("#44000000"));
-                    StopAndProcessRecording(); // <-- НАША НОВАЯ ФУНКЦИЯ
+                    Log.Debug(TAG, ">>> Кнопка ОТПУЩЕНА.");
+
+                    if (_wasDragged)
+                    {
+                        // Если было перетаскивание, просто останавливаем и отменяем запись
+                        StopRecordingAndDiscard();
+                    }
+                    else
+                    {
+                        // Если перетаскивания не было, обрабатываем запись как обычно
+                        StopAndProcessRecording();
+                    }
                     return true;
             }
             return false;
+        }
+
+        private void StopRecordingAndDiscard()
+        {
+            Log.Debug(TAG, "Обнаружено перетаскивание. Запись отменена.");
+            if (!_isRecording) return;
+
+            _isRecording = false;
+            // Не ждем завершения задачи, просто даем команду на остановку
+            _audioRecord?.Stop();
+            _audioRecord?.Release();
+            _audioRecord = null;
+
+            _recordingStream?.Close(); // Закрываем и удаляем поток с данными
         }
 
         private void StartRecording()
@@ -217,7 +269,7 @@ namespace WhisperInk.Maui
                 try 
                 {
                     _floatingButton.SetImageResource(Resource.Drawable.mic_icon);
-                    _floatingButton.SetBackgroundColor(Color.ParseColor("#44000000"));
+                    _floatingButton.SetBackgroundColor(Color.Transparent); 
                 }
                 catch
                 {
