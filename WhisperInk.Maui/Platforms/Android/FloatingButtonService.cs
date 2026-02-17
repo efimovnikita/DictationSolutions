@@ -1,0 +1,288 @@
+﻿using Android.App;
+using Android.Content;
+using Android.Content.PM;
+using Android.Graphics;
+using Android.Media;
+using Android.OS;
+using Android.Runtime;
+using Android.Util;
+using Android.Views;
+using Android.Widget;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using Color = Android.Graphics.Color;
+using Path = System.IO.Path;
+using View = Android.Views.View;
+using Clipboard = Android.Content.ClipboardManager;
+
+namespace WhisperInk.Maui
+{
+    // Добавляем ", View.IOnTouchListener" к объявлению класса
+    [Service(ForegroundServiceType = ForegroundService.TypeMicrophone)]
+    public class FloatingButtonService : Service, View.IOnTouchListener
+    {
+        public const string TAG = "WhisperInkDebug";
+        private const string MistralApiKey = "0Fo6vFq1900BfI8fucvPEoRgXkX7nLHc";
+
+        private IWindowManager? _windowManager;
+        private ImageView? _floatingButton;
+
+        private AudioRecord? _audioRecord;
+        private string? _pcmFilePath;
+        private bool _isRecording;
+        private Task? _recordingTask;
+        private MemoryStream? _recordingStream; // <-- Используем MemoryStream вместо пути к файлу
+
+        private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
+
+        private WindowManagerLayoutParams? _layoutParams; // Вынесли, чтобы менять положение
+
+        public override IBinder? OnBind(Intent? intent) => null;
+        
+        public bool OnTouch(View? v, MotionEvent? e)
+        {
+            if (e == null) return false;
+            switch (e.Action)
+            {
+                case MotionEventActions.Down:
+                    Log.Debug(TAG, ">>> Кнопка НАЖАТА. Начинаем запись...");
+                    _floatingButton?.SetBackgroundColor(Color.Red);
+                    StartRecording(); // <-- НАША НОВАЯ ФУНКЦИЯ
+                    return true;
+
+                case MotionEventActions.Up:
+                    Log.Debug(TAG, ">>> Кнопка ОТПУЩЕНА. Останавливаем запись...");
+                    _floatingButton?.SetBackgroundColor(Color.ParseColor("#44000000"));
+                    StopAndProcessRecording(); // <-- НАША НОВАЯ ФУНКЦИЯ
+                    return true;
+            }
+            return false;
+        }
+
+        private void StartRecording()
+        {
+            if (_isRecording) return;
+            try
+            {
+                // Инициализируем поток в памяти
+                _recordingStream = new MemoryStream();
+
+                var audioSource = AudioSource.Mic;
+                var sampleRate = 16000;
+                var channelConfig = ChannelIn.Mono;
+                var audioFormat = Encoding.Pcm16bit;
+                var bufferSize = AudioRecord.GetMinBufferSize(sampleRate, channelConfig, audioFormat);
+
+                _audioRecord = new AudioRecord(audioSource, sampleRate, channelConfig, audioFormat, bufferSize);
+                _audioRecord.StartRecording();
+                _isRecording = true;
+
+                // Запускаем запись в фоновом потоке
+                _recordingTask = Task.Run(() =>
+                {
+                    var buffer = new byte[bufferSize];
+                    while (_isRecording)
+                    {
+                        int read = _audioRecord.Read(buffer, 0, buffer.Length);
+                        if (read > 0)
+                        {
+                            // Пишем напрямую в MemoryStream
+                            _recordingStream.Write(buffer, 0, read);
+                        }
+                    }
+                });
+            }
+            catch (Exception ex) { Log.Error(TAG, $"!!! ОШИБКА StartRecording: {ex.Message}"); }
+        }
+        private async void StopAndProcessRecording()
+        {
+            if (!_isRecording || _recordingStream == null) return;
+
+            // 1. Останавливаем запись
+            _isRecording = false;
+            if (_recordingTask != null) await _recordingTask; // Гарантированно дожидаемся завершения потока
+            _audioRecord?.Stop();
+            _audioRecord?.Release();
+            _audioRecord = null;
+
+            // 2. Получаем сырые PCM данные из MemoryStream
+            byte[] pcmData = _recordingStream.ToArray();
+            _recordingStream.Close(); // Освобождаем память
+            
+            if (pcmData.Length == 0)
+            {
+                Log.Warn(TAG, "Записан пустой аудиофайл, отправка отменена.");
+                return;
+            }
+
+            // 3. Создаем WAV-файл в памяти
+            byte[] wavData = WavHelper.CreateWavFile(pcmData, 16000, 1, 16);
+            Log.Debug(TAG, $"WAV-файл создан в памяти, размер: {wavData.Length} байт.");
+
+            // 4. Отправляем в API
+            string? transcribedText = await TranscribeAudioAsync(wavData);
+
+            // 5. Обрабатываем результат
+            if (!string.IsNullOrEmpty(transcribedText))
+            {
+                Log.Debug(TAG, $"Получен текст: {transcribedText}");
+                CopyToClipboardAndNotify(transcribedText);
+            }
+            else
+            {
+                Log.Error(TAG, "Не удалось получить текст от API (возможно, пустой ответ).");
+                ShowToast("Ошибка распознавания");
+            }
+        }
+
+        private async Task<string?> TranscribeAudioAsync(byte[] wavFileBytes)
+        {
+            if (MistralApiKey.Contains("ВАШ_API_КЛЮЧ"))
+            {
+                Log.Error(TAG, "API ключ не установлен!");
+                return null;
+            }
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.mistral.ai/v1/audio/transcriptions");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MistralApiKey);
+
+                using var content = new MultipartFormDataContent();
+                var audioContent = new ByteArrayContent(wavFileBytes);
+                audioContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/wav");
+
+                content.Add(audioContent, "file", "audio.wav");
+                content.Add(new StringContent("voxtral-mini-latest"), "model");
+
+                request.Content = content;
+                var response = await _httpClient.SendAsync(request);
+                string responseString = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    // Теперь мы логируем полный ответ сервера, что очень поможет в отладке
+                    Log.Error(TAG, $"Ошибка API: {(int)response.StatusCode} - {responseString}");
+                    return null;
+                }
+        
+                using var doc = JsonDocument.Parse(responseString);
+                return doc.RootElement.TryGetProperty("text", out var textElement) ? textElement.GetString() : null;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(TAG, $"Сетевая ошибка: {ex.Message}");
+                // Если есть вложенное исключение (часто бывает при проблемах с сетью), тоже его посмотрим
+                if (ex.InnerException != null)
+                {
+                    Log.Error(TAG, $"Внутреннее исключение: {ex.InnerException.Message}");
+                }
+                return null;
+            }
+        }
+
+        private void CopyToClipboardAndNotify(string text)
+        {
+            // Используем нативный API Android для работы с буфером обмена
+            var clipboardManager = (Clipboard)GetSystemService(ClipboardService);
+            var clipData = ClipData.NewPlainText("WhisperInk Result", text);
+            clipboardManager.PrimaryClip = clipData;
+            
+            // Показываем всплывающее уведомление
+            ShowToast("Текст скопирован!");
+        }
+
+        private void ShowToast(string message)
+        {
+            // Toast нужно показывать в UI-потоке
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                Toast.MakeText(this, message, ToastLength.Short)?.Show();
+            });
+        }
+
+        private void CreateFloatingButton()
+        {
+            try
+            {
+                Log.Debug(TAG, ">>> Начинаем создание кнопки...");
+                _windowManager = GetSystemService(WindowService).JavaCast<IWindowManager>();
+
+                _floatingButton = new ImageView(this);
+                // ↓↓↓ ПОДПИСЫВАЕМСЯ НА СОБЫТИЯ КАСАНИЯ ↓↓↓
+                _floatingButton.SetOnTouchListener(this);
+
+                try 
+                {
+                    _floatingButton.SetImageResource(Resource.Drawable.mic_icon);
+                    _floatingButton.SetBackgroundColor(Color.ParseColor("#44000000"));
+                }
+                catch
+                {
+                    Log.Warn(TAG, ">>> Ресурс 'mic_icon' не найден. Используется серый фон.");
+                    _floatingButton.SetBackgroundColor(Color.ParseColor("#888888")); // Сделаем непрозрачным серым
+                }
+
+                _layoutParams = new WindowManagerLayoutParams(
+                    150, 150,
+                    WindowManagerTypes.ApplicationOverlay,
+                    WindowManagerFlags.NotFocusable,
+                    Format.Translucent
+                );
+
+                _layoutParams.Gravity = GravityFlags.Left | GravityFlags.Top;
+                _layoutParams.X = 100;
+                _layoutParams.Y = 200;
+
+                _windowManager.AddView(_floatingButton, _layoutParams);
+                Log.Debug(TAG, ">>> КНОПКА УСПЕШНО ДОБАВЛЕНА НА ЭКРАН!");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(TAG, $"!!! ОШИБКА в CreateFloatingButton: {ex.Message}");
+            }
+        }
+
+        // Остальные методы (OnStartCommand, CreateNotificationChannel, OnDestroy) остаются без изменений.
+        // Просто скопируйте их из вашего предыдущего рабочего файла.
+        public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
+        {
+            Log.Debug(TAG, ">>> FloatingButtonService: OnStartCommand вызван.");
+
+            CreateNotificationChannel();
+            var notification = new Notification.Builder(this, "WhisperInkServiceChannel")
+                .SetContentTitle("WhisperInk Active")
+                .SetContentText("Floating button is available.")
+                .SetSmallIcon(Resource.Mipmap.appicon)
+                .Build();
+
+            StartForeground(101, notification, ForegroundService.TypeMicrophone);
+
+            if (_floatingButton == null)
+            {
+                CreateFloatingButton();
+            }
+
+            return StartCommandResult.Sticky;
+        }
+        private void CreateNotificationChannel()
+        {
+            if (Build.VERSION.SdkInt < BuildVersionCodes.O) return;
+
+            var channelName = "WhisperInk Service";
+            var channel = new NotificationChannel("WhisperInkServiceChannel", channelName, NotificationImportance.Low);
+            var manager = (NotificationManager)GetSystemService(NotificationService);
+            manager.CreateNotificationChannel(channel);
+            Log.Debug(TAG, ">>> Канал уведомлений создан.");
+        }
+        public override void OnDestroy()
+        {
+            base.OnDestroy();
+            Log.Debug(TAG, ">>> OnDestroy вызван. Удаляем кнопку.");
+            if (_floatingButton != null && _windowManager != null)
+            {
+                _windowManager.RemoveView(_floatingButton);
+            }
+        }
+    }
+}
