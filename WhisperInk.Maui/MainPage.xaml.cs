@@ -5,11 +5,12 @@ namespace WhisperInk.Maui
     public partial class MainPage : ContentPage
     {
         public const string ApiKeyPreferenceKey = "MistralApiKey";
+        public const string ProxyPreferenceKey = "ProxyConfig";
 
         public MainPage()
         {
             InitializeComponent();
-            LoadApiKey();
+            LoadSettings();
         }
 
         // Загружаем логи при открытии страницы
@@ -19,10 +20,14 @@ namespace WhisperInk.Maui
             LoadLogs();
         }
 
-        private void LoadApiKey()
+        private void LoadSettings()
         {
             var apiKey = Preferences.Get(ApiKeyPreferenceKey, string.Empty);
             ApiKeyEntry.Text = apiKey;
+
+            // Загружаем прокси
+            var proxyConf = Preferences.Get(ProxyPreferenceKey, string.Empty);
+            ProxyEntry.Text = proxyConf;
         }
 
         private void OnSaveClicked(object? sender, EventArgs e)
@@ -35,12 +40,18 @@ namespace WhisperInk.Maui
             else
             {
                 Preferences.Set(ApiKeyPreferenceKey, ApiKeyEntry.Text);
-                StatusLabel.Text = "API Key saved successfully!";
+
+                // Сохраняем прокси (даже если пусто, чтобы можно было сбросить)
+                if (string.IsNullOrWhiteSpace(ProxyEntry.Text))
+                    Preferences.Remove(ProxyPreferenceKey);
+                else
+                    Preferences.Set(ProxyPreferenceKey, ProxyEntry.Text.Trim());
+
+                StatusLabel.Text = "Settings saved successfully!";
                 StatusLabel.TextColor = Colors.Green;
 
-                // Добавим запись в лог о сохранении настроек
-                LogService.Log("Настройки: API ключ обновлен пользователем.");
-                LoadLogs(); // Обновим список сразу
+                LogService.Log("Настройки: API ключ и прокси обновлены.");
+                LoadLogs();
             }
 
             Dispatcher.StartTimer(TimeSpan.FromSeconds(3), () =>

@@ -15,6 +15,7 @@ using Path = System.IO.Path;
 using View = Android.Views.View;
 using Clipboard = Android.Content.ClipboardManager;
 using Microsoft.Maui.Storage;
+using System.Net;
 
 namespace WhisperInk.Maui
 {
@@ -28,7 +29,6 @@ namespace WhisperInk.Maui
         private ImageView? _floatingButton;
 
         private AudioRecord? _audioRecord;
-        private string? _pcmFilePath;
         private bool _isRecording;
         private Task? _recordingTask;
         private MemoryStream? _recordingStream; // <-- Используем MemoryStream вместо пути к файлу
@@ -37,9 +37,10 @@ namespace WhisperInk.Maui
         private int _initialY;
         private float _initialTouchX;
         private float _initialTouchY;
-        private bool _wasDragged = false;
 
-        private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
+        private static HttpClient? _sharedClient;
+        private static string _lastUsedProxyConfig = "N/A"; // Специальное значение для инициализации
+        private static readonly object _clientLock = new object(); // Для потокобезопасности
 
         private WindowManagerLayoutParams? _layoutParams; // Вынесли, чтобы менять положение
 
@@ -57,7 +58,6 @@ namespace WhisperInk.Maui
                     _initialY = _layoutParams.Y;
                     _initialTouchX = e.RawX;
                     _initialTouchY = e.RawY;
-                    _wasDragged = false; // Сбрасываем флаг перетаскивания
 
                     StartRecording();
                     return true;
@@ -71,7 +71,6 @@ namespace WhisperInk.Maui
                     const float DragThreshold = 10.0f;
                     if (Math.Abs(dX) > DragThreshold || Math.Abs(dY) > DragThreshold)
                     {
-                        _wasDragged = true; // Устанавливаем флаг, что это перетаскивание
                         // Обновляем параметры положения окна
                         _layoutParams.X = _initialX + (int)dX;
                         _layoutParams.Y = _initialY + (int)dY;
@@ -251,6 +250,7 @@ namespace WhisperInk.Maui
         {
             // Получаем ключ из настроек приложения
             var mistralApiKey = Preferences.Get("MistralApiKey", string.Empty);
+            var currentProxyConfig = Preferences.Get("ProxyConfig", string.Empty);
 
             if (string.IsNullOrEmpty(mistralApiKey))
             {
@@ -261,6 +261,9 @@ namespace WhisperInk.Maui
 
             try
             {
+                // 1. Получаем правильный клиент (старый или новый, если настройки поменялись)
+                var client = GetSmartHttpClient(currentProxyConfig);
+
                 using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.mistral.ai/v1/audio/transcriptions");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", mistralApiKey);
 
@@ -278,11 +281,12 @@ namespace WhisperInk.Maui
                 request.Content = content;
         
                 // ИСПРАВЛЕНИЕ 4: Обернули ответ в using
-                using var response = await _httpClient.SendAsync(request);
+                using var response = await client.SendAsync(request);
                 string responseString = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    LogService.Log($"Ошибка API: {(int)response.StatusCode} - {responseString}");
                     Log.Error(TAG, $"Ошибка API: {(int)response.StatusCode} - {responseString}");
                     return null;
                 }
@@ -292,12 +296,90 @@ namespace WhisperInk.Maui
             }
             catch (Exception ex)
             {
+                LogService.Log($"Сетевая ошибка: {ex.Message}");
                 Log.Error(TAG, $"Сетевая ошибка: {ex.Message}");
                 if (ex.InnerException != null)
                 {
+                    LogService.Log($"Внутреннее исключение: {ex.InnerException.Message}");
                     Log.Error(TAG, $"Внутреннее исключение: {ex.InnerException.Message}");
                 }
                 return null;
+            }
+        }
+
+        private HttpClient GetSmartHttpClient(string currentProxySettings)
+        {
+            lock (_clientLock)
+            {
+                // Если клиент уже есть И настройки прокси НЕ изменились — возвращаем старый
+                if (_sharedClient != null && _lastUsedProxyConfig == currentProxySettings)
+                {
+                    return _sharedClient;
+                }
+
+                // Если настройки изменились или клиента нет — создаем новый
+                Log.Debug(TAG, "Настройки прокси изменились (или первый запуск). Пересоздаем HttpClient.");
+
+                // Если был старый клиент — можно его корректно закрыть (хотя в статике это не обязательно, GC заберет)
+                _sharedClient?.Dispose();
+
+                _sharedClient = CreateConfiguredHttpClient(currentProxySettings);
+                _sharedClient.Timeout = TimeSpan.FromSeconds(60);
+
+                // Запоминаем текущую конфигурацию
+                _lastUsedProxyConfig = currentProxySettings;
+
+                return _sharedClient;
+            }
+        }
+
+        private HttpClient CreateConfiguredHttpClient(string proxySettings)
+        {
+            if (string.IsNullOrWhiteSpace(proxySettings))
+            {
+                return new HttpClient(); // Прямое подключение
+            }
+
+            try
+            {
+                var atIndex = proxySettings.LastIndexOf('@');
+
+                if (atIndex == -1)
+                {
+                    // Прокси без пароля
+                    var simpleHandler = new SocketsHttpHandler
+                    {
+                        Proxy = new WebProxy(proxySettings),
+                        UseProxy = true
+                    };
+                    return new HttpClient(simpleHandler);
+                }
+
+                var credentialsPart = proxySettings.Substring(0, atIndex);
+                var addressPart = proxySettings.Substring(atIndex + 1);
+                var creds = credentialsPart.Split(':');
+
+                // Используем SocketsHttpHandler - он надежнее в MAUI
+                var handler = new SocketsHttpHandler
+                {
+                    UseProxy = true,
+                    Proxy = new WebProxy($"http://{addressPart}")
+                    {
+                        Credentials = new NetworkCredential(creds[0], creds[1])
+                    },
+                    // ВАЖНО: Заставляем отправлять логин и пароль сразу с первым запросом!
+                    PreAuthenticate = true
+                };
+
+                LogService.Log("Используется прокси.");
+
+                return new HttpClient(handler);
+            }
+            catch (Exception ex)
+            {
+                LogService.Log($"Ошибка прокси: {ex.Message}. Возврат к прямому подключению.");
+                Log.Error(TAG, $"Ошибка прокси: {ex.Message}. Возврат к прямому подключению.");
+                return new HttpClient();
             }
         }
 
