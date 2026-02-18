@@ -8,19 +8,21 @@
 
         <VerticalStackLayout Grid.Row="0" Spacing="15">
 
-            <Label Text="WhisperInk Settings"
+            <Label Text="Settings"
            Style="{StaticResource Headline}"
            FontSize="28" />
 
-            <Label Text="Please enter your Mistral API key."
-           HorizontalTextAlignment="Center"
-           TextColor="{AppThemeBinding Light={StaticResource Gray600}, Dark={StaticResource Gray300}}" />
+            <Label Text="Mistral API key"
+            FontSize="14"
+            FontAttributes="Bold"
+            Margin="0,10,0,0"
+           TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
 
             <Entry x:Name="ApiKeyEntry"
            Placeholder="Your Mistral API Key"
            ClearButtonVisibility="WhileEditing" />
 
-            <Label Text="Proxy Settings (Optional)"
+            <Label Text="Proxy (Optional)"
            FontSize="14"
            FontAttributes="Bold"
            Margin="0,10,0,0"
@@ -31,10 +33,11 @@
            ClearButtonVisibility="WhileEditing" />
 
             <Label Text="Format: user:password@host:port"
-           FontSize="10"
-           TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+           FontSize="11"
+           TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource White}}" />
             <Button x:Name="SaveBtn"
-            Text="Save Settings" 
+            Text="Save" 
+            FontAttributes="Bold"
             Clicked="OnSaveClicked"
             HorizontalOptions="Fill"
             Margin="0,10,0,0"/>
@@ -49,12 +52,10 @@
 
 
         <Grid Grid.Row="1" RowDefinitions="Auto, *">
-            <Label Grid.Row="0" 
-                   Text="Execution Log:" 
-                   TextColor="Black"
-                   HorizontalOptions="Center"
-                   FontSize="16"
-                   FontAttributes="Bold"
+
+            <Label Text="Log"
+                   Style="{StaticResource Headline}"
+                   FontSize="28"
                    Margin="0,0,0,10"/>
 
             <Border Grid.Row="1"
