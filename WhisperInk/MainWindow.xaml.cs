@@ -21,6 +21,7 @@ public class AppConfig
 {
     public string MistralApiKey { get; set; } = "setup-your-key-here";
     public bool IsSoundEnabled { get; set; } = true;
+    public string SystemPrompt { get; set; } = "You are a precise execution engine. Output ONLY the direct result of the task. Do not say 'Here is the translation' or 'Sure'. Do not provide explanations, alternatives, or conversational filler. Just the result.";
 }
 
 public partial class MainWindow : Window
@@ -34,6 +35,8 @@ public partial class MainWindow : Window
 
     private string _mistralApiKey = "";
     private const string ConfigFileName = "config.json";
+
+    private string _systemPrompt = new AppConfig().SystemPrompt;
 
     // --- API MISTRAL ---
     private const string AudioApiUrl = "https://api.mistral.ai/v1/audio/transcriptions";
@@ -190,7 +193,8 @@ public partial class MainWindow : Window
 
             string jsonContent = File.ReadAllText(configPath);
             var config = JsonSerializer.Deserialize<AppConfig>(jsonContent);
-            _isSoundEnabled = config.IsSoundEnabled; // Initialize sound setting from loaded config
+            _isSoundEnabled = config?.IsSoundEnabled ?? true;
+            _systemPrompt = string.IsNullOrWhiteSpace(config?.SystemPrompt) ? new AppConfig().SystemPrompt : config.SystemPrompt;
 
             if (config == null || String.IsNullOrWhiteSpace(config.MistralApiKey) || config.MistralApiKey.Contains("ВСТАВЬТЕ"))
             {
@@ -223,7 +227,8 @@ public partial class MainWindow : Window
             var configToSave = new AppConfig
             {
                 MistralApiKey = _mistralApiKey,
-                IsSoundEnabled = _isSoundEnabled
+                IsSoundEnabled = _isSoundEnabled,
+                SystemPrompt = _systemPrompt
             };
 
             var options = new JsonSerializerOptions { WriteIndented = true };
@@ -258,6 +263,20 @@ public partial class MainWindow : Window
             new HistoryWindow().Show();
         };
         MainContextMenu.Items.Add(historyItem);
+
+        // Добавляем пункт для редактирования промпта
+        var editPromptItem = new MenuItem { Header = "⚙ System Prompt..." };
+        editPromptItem.Click += (_, _) =>
+        {
+            var promptWindow = new PromptWindow(_systemPrompt);
+            if (promptWindow.ShowDialog() == true) // Если нажали Save
+            {
+                _systemPrompt = promptWindow.PromptText;
+                SaveConfig(); // Сразу сохраняем изменения в файл
+            }
+        };
+        MainContextMenu.Items.Insert(1, editPromptItem);
+
         MainContextMenu.Items.Add(new Separator());
 
         MainContextMenu.Items.Add(new MenuItem { Header = "Microphones:", IsEnabled = false, FontWeight = FontWeights.Bold });
@@ -389,17 +408,17 @@ public partial class MainWindow : Window
     }
     private void AnimateBar(Rectangle bar) => bar.Height = _rnd.Next(3, 15);
 
-    // --- ЛОГИКА ОСТАНОВКИ И ОБРАБОТКИ ---
+    // --- STOP AND PROCESSING LOGIC ---
     public async void StopAndTranscribe()
     {
-        if (_isProcessing) return; // Дополнительная защита на случай повторного входа
-        _isProcessing = true;      // <-- Устанавливаем флаг в начале
+        if (_isProcessing) return; // Additional protection against repeated logins
+        _isProcessing = true;      // <-- Set the flag at the beginning.
 
         try
         {
             PlayUiSound(SoundType.Stop);
 
-            // 1. Остановка записи
+            // 1. Recording stopped
             _waveIn?.StopRecording();
             _waveIn?.Dispose(); _waveIn = null;
             _writer?.Close(); _writer?.Dispose(); _writer = null;
@@ -412,20 +431,37 @@ public partial class MainWindow : Window
             var mode = _currentMode;
             string contextText = "";
 
-            // 2. Если режим "AnalyzeContext", копируем контекст
+            // 2. If "AnalyzeContext" mode is on, copy the context.
             if (mode == RecordingMode.AnalyzeContext)
             {
-                SimulateCtrlC();
-                await Task.Delay(300); // Ждем буфер
+                // Clear the buffer BEFORE attempting to copy.
+                // This way, we'll know exactly when new text appears.
+                try { Clipboard.Clear(); } catch { }
 
-                try
+                SimulateCtrlC();
+
+                // Polling loop: checking the buffer up to 10 times with a 100 ms interval (maximum 1 second)
+                for (int i = 0; i < 10; i++)
                 {
-                    if (Clipboard.ContainsText()) contextText = Clipboard.GetText();
+                    await Task.Delay(100);
+
+                    try
+                    {
+                        if (Clipboard.ContainsText())
+                        {
+                            contextText = Clipboard.GetText();
+                            break; // Text successfully copied, exiting the wait loop.
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore errors (e.g., if the buffer is locked by another process)
+                        // and just wait for the next iteration of the loop
+                    }
                 }
-                catch { /* ignored */ }
             }
 
-            // 3. Транскрибация голоса (Промт пользователя)
+            // 3. Voice transcription (User prompt)
             string? userPrompt = await TranscribeAudioAsync(_currentFileName);
 
             if (String.IsNullOrEmpty(userPrompt))
@@ -439,16 +475,16 @@ public partial class MainWindow : Window
 
             string resultTextToPaste = "";
 
-            // 4. Логика по режимам
+            // 4. Mode Logic
             if (mode == RecordingMode.Inject)
             {
-                // Просто вставляем то, что надиктовали
+                // Just insert what was dictated.
                 resultTextToPaste = userPrompt;
             }
             else if (mode == RecordingMode.AnalyzeContext)
             {
-                // Отправляем в Chat Completions (Контекст + Промт)
-                lblStatus.Text = "AI..."; // Индикация работы AI
+                // Send to Chat Completions (Context + Prompt)
+                lblStatus.Text = "AI..."; // AI Operation Indication
                 string? aiResponse = await SendChatCompletionAsync(contextText, userPrompt);
 
                 if (!String.IsNullOrEmpty(aiResponse))
@@ -467,7 +503,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            // 5. Вставка результата
+            // 5. Result insertion
             lblStatus.Text = "✓";
             MainBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(100, 255, 100));
 
@@ -493,7 +529,7 @@ public partial class MainWindow : Window
         finally
         {
             _currentMode = RecordingMode.None;
-            _isProcessing = false; // <-- Сбрасываем флаг в самом конце, в блоке finally
+            _isProcessing = false; // <-- Reset the flag at the very end, in the `finally` block.
         }
     }
 
@@ -545,7 +581,7 @@ public partial class MainWindow : Window
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mistralApiKey);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-            // Формируем контент пользователя
+            // Creating user content
             string finalContent;
             if (!string.IsNullOrWhiteSpace(context))
             {
@@ -556,7 +592,6 @@ public partial class MainWindow : Window
                 finalContent = instruction;
             }
 
-            // Добавляем System Prompt для строгости и краткости
             var payload = new
             {
                 model = ChatModel,
@@ -565,7 +600,7 @@ public partial class MainWindow : Window
                     new
                     {
                         role = "system",
-                        content = "You are a precise execution engine. Output ONLY the direct result of the task. Do not say 'Here is the translation' or 'Sure'. Do not provide explanations, alternatives, or conversational filler. Just the result."
+                        content = _systemPrompt
                     },
                     new
                     {
@@ -574,8 +609,6 @@ public partial class MainWindow : Window
                     }
                 },
                 temperature = 0.3,
-                // top_p = 0.5,
-                // max_tokens = 2048,
             };
 
             string jsonBody = JsonSerializer.Serialize(payload);
@@ -597,7 +630,7 @@ public partial class MainWindow : Window
                 if (firstChoice.TryGetProperty("message", out var message) &&
                     message.TryGetProperty("content", out var content))
                 {
-                    return content.GetString()?.Trim().Trim('"'); // Trim уберет лишние пробелы/переносы
+                    return content.GetString()?.Trim().Trim('"'); // Trim removes extra spaces/line breaks.
                 }
             }
         }
@@ -620,18 +653,43 @@ public partial class MainWindow : Window
 
     private static void SimulateCtrlV()
     {
-        Thread.Sleep(100);
+        // 1. Force-releasing modifiers to prevent "sticking"
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);    // Alt
+        keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0);    // Win (left)
+        keybd_event(VK_RWIN, 0, KEYEVENTF_KEYUP, 0);    // Win (right)
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0); // Ctrl
+
+        Thread.Sleep(50); // Give the OS a micro-pause to update the keyboard state.
+
+        // 2. Sending a pure Ctrl + V press.
         keybd_event(VK_CONTROL, 0, 0, 0);
         keybd_event(VK_V, 0, 0, 0);
+
+        Thread.Sleep(20); // Micro-pause between pressing and releasing
+
+        // 3. Release the keys
         keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0);
         keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
     }
 
     private static void SimulateCtrlC()
     {
-        Thread.Sleep(150);
+        // 1. Force-release the modifiers.
+        // This ensures that the keys physically pressed by the user 
+        // won’t interfere with our virtual combination.
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);    // Alt
+        keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0);    // Win (left)
+        keybd_event(VK_RWIN, 0, KEYEVENTF_KEYUP, 0);    // Win (right)
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0); // Ctrl
+
+        Thread.Sleep(50); // Giving the OS a micro-pause to update the keyboard state.
+
+        // 2. Sending a clean Ctrl + C press.
         keybd_event(VK_CONTROL, 0, 0, 0);
         keybd_event(VK_C, 0, 0, 0);
+
+        Thread.Sleep(20); // Time between press and release
+
         keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0);
         keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
     }
