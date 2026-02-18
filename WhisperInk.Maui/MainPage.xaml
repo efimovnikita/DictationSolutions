@@ -2,39 +2,79 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="WhisperInk.Maui.MainPage"
-             Title="WhisperInk Settings">
+             Title="WhisperInk Dashboard">
 
-    <VerticalStackLayout
-        Padding="30"
-        Spacing="20"
-        VerticalOptions="Center">
+    <Grid RowDefinitions="Auto, *" Padding="20" RowSpacing="10">
 
-        <Label
-            Text="WhisperInk Settings"
-            Style="{StaticResource Headline}"
-            HorizontalOptions="Center" />
+        <VerticalStackLayout Grid.Row="0" Spacing="15">
 
-        <Label
-            Text="Please enter your Mistral API key. The floating button service is running in the background."
-            HorizontalOptions="Center"
-            HorizontalTextAlignment="Center" />
+            <Label Text="WhisperInk Settings"
+                   Style="{StaticResource Headline}"
+                   FontSize="28" />
 
-        <Entry
-            x:Name="ApiKeyEntry"
-            Placeholder="Your Mistral API Key"
-            ClearButtonVisibility="WhileEditing" />
+            <Label Text="Please enter your Mistral API key. The floating button service is running in the background."
+                   HorizontalTextAlignment="Center"
+                   TextColor="{AppThemeBinding Light={StaticResource Gray600}, Dark={StaticResource Gray300}}" />
 
-        <Button
-            x:Name="SaveBtn"
-            Text="Save API Key"
-            Clicked="OnSaveClicked"
-            HorizontalOptions="Fill" />
+            <Entry x:Name="ApiKeyEntry"
+                   Placeholder="Your Mistral API Key"
+                   ClearButtonVisibility="WhileEditing" />
 
-        <Label
-            x:Name="StatusLabel"
-            HorizontalOptions="Center"
-            TextColor="Green" />
+            <Button x:Name="SaveBtn"
+                    Text="Save API Key"
+                    Clicked="OnSaveClicked"
+                    HorizontalOptions="Fill" />
 
-    </VerticalStackLayout>
+            <Label x:Name="StatusLabel"
+                   HorizontalOptions="Center"
+                   TextColor="Green"
+                   HeightRequest="20"/>
+
+            <BoxView HeightRequest="1" Color="{StaticResource Gray300}" Margin="0,10"/>
+        </VerticalStackLayout>
+
+
+        <Grid Grid.Row="1" RowDefinitions="Auto, *">
+            <Label Grid.Row="0" 
+                   Text="Execution Log:" 
+                   TextColor="Black"
+                   HorizontalOptions="Center"
+                   FontSize="16"
+                   FontAttributes="Bold"
+                   Margin="0,0,0,10"/>
+
+            <Border Grid.Row="1"
+                    Stroke="{AppThemeBinding Light={StaticResource Gray400}, Dark={StaticResource Gray500}}"
+                    StrokeThickness="1"
+                    StrokeShape="RoundRectangle 10"
+                    Padding="5"
+                    BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Black}}">
+
+                <RefreshView x:Name="LogsRefreshView"
+                             Refreshing="OnLogsRefreshing">
+
+                    <CollectionView x:Name="LogsCollectionView">
+                        <CollectionView.EmptyView>
+                            <Label Text="Нет записей" 
+                                   HorizontalOptions="Center" 
+                                   VerticalOptions="Center"
+                                   TextColor="Gray"/>
+                        </CollectionView.EmptyView>
+
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate>
+                                <Label Text="{Binding .}" 
+                                       FontSize="12" 
+                                       TextColor="{AppThemeBinding Light=Black, Dark=White}"
+                                       Padding="5,2"/>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+
+                </RefreshView>
+            </Border>
+        </Grid>
+
+    </Grid>
 
 </ContentPage>

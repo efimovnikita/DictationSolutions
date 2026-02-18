@@ -154,7 +154,9 @@ namespace WhisperInk.Maui
     
             // Ставим флаг СРАЗУ в UI-потоке, чтобы предотвратить множественные 
             // одновременные нажатия, пока фоновый поток запускается
-            _isRecording = true; 
+            _isRecording = true;
+
+            LogService.Log("Начало записи...");
 
             // Отправляем всю работу с железом в фон
             _recordingTask = Task.Run(() =>
@@ -240,7 +242,7 @@ namespace WhisperInk.Maui
                 else
                 {
                     Log.Error(TAG, "Не удалось получить текст от API (возможно, пустой ответ).");
-                    ShowToast("Ошибка распознавания");
+                    LogService.Log("Ошибка распознавания");
                 }
             });
         }
@@ -253,7 +255,7 @@ namespace WhisperInk.Maui
             if (string.IsNullOrEmpty(mistralApiKey))
             {
                 Log.Error(TAG, "API ключ не установлен! Пожалуйста, задайте его в приложении.");
-                ShowToast("API key not set");
+                LogService.Log("API key not set");
                 return null;
             }
 
@@ -324,24 +326,15 @@ namespace WhisperInk.Maui
                     {
                         clipboardManager.PrimaryClip = clipData;
                         // Toast тоже вызываем отсюда, он уже умеет обрабатывать потоки
-                        ShowToast("Текст скопирован!");
+                        LogService.Log("Текст скопирован!");
                     }
                 }
                 catch (Exception ex)
                 {
                     Log.Error(TAG, $"Ошибка копирования в буфер: {ex.Message}");
-                    ShowToast("Ошибка при копировании");
+                    LogService.Log("Ошибка при копировании");
                 }
             }
-        }
-
-        private void ShowToast(string message)
-        {
-            // Toast нужно показывать в UI-потоке
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                Toast.MakeText(this, message, ToastLength.Short)?.Show();
-            });
         }
 
         private void CreateFloatingButton()

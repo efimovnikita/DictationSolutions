@@ -1,8 +1,9 @@
-﻿namespace WhisperInk.Maui
+﻿using System.Collections.ObjectModel;
+
+namespace WhisperInk.Maui
 {
     public partial class MainPage : ContentPage
     {
-        // Ключ для хранения API-ключа в настройках
         public const string ApiKeyPreferenceKey = "MistralApiKey";
 
         public MainPage()
@@ -11,9 +12,15 @@
             LoadApiKey();
         }
 
+        // Загружаем логи при открытии страницы
+        protected override void OnAppearing()
+        {
+            base.OnAppearing();
+            LoadLogs();
+        }
+
         private void LoadApiKey()
         {
-            // Загружаем ключ из хранилища и отображаем в поле ввода
             var apiKey = Preferences.Get(ApiKeyPreferenceKey, string.Empty);
             ApiKeyEntry.Text = apiKey;
         }
@@ -27,18 +34,37 @@
             }
             else
             {
-                // Сохраняем ключ в хранилище
                 Preferences.Set(ApiKeyPreferenceKey, ApiKeyEntry.Text);
                 StatusLabel.Text = "API Key saved successfully!";
                 StatusLabel.TextColor = Colors.Green;
+
+                // Добавим запись в лог о сохранении настроек
+                LogService.Log("Настройки: API ключ обновлен пользователем.");
+                LoadLogs(); // Обновим список сразу
             }
 
-            // Скрываем сообщение через 3 секунды
             Dispatcher.StartTimer(TimeSpan.FromSeconds(3), () =>
             {
                 StatusLabel.Text = string.Empty;
-                return false; // Остановить таймер
+                return false;
             });
+        }
+
+        // Метод загрузки логов в UI
+        private void LoadLogs()
+        {
+            // Получаем список строк из сервиса
+            var logs = LogService.GetLastLogs(100);
+
+            // Привязываем к CollectionView
+            LogsCollectionView.ItemsSource = logs;
+        }
+
+        // Обработчик "потянуть для обновления"
+        private void OnLogsRefreshing(object sender, EventArgs e)
+        {
+            LoadLogs();
+            LogsRefreshView.IsRefreshing = false; // Остановить анимацию спиннера
         }
     }
 }
