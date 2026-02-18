@@ -52,7 +52,7 @@ namespace WhisperInk.Maui
             switch (e.Action)
             {
                 case MotionEventActions.Down:
-                    Log.Debug(TAG, ">>> Кнопка НАЖАТА. Начинаем запись...");
+                    Log.Debug(TAG, ">>> Button PRESSED. Starting recording....");
                     // Сохраняем начальные позиции
                     _initialX = _layoutParams.X;
                     _initialY = _layoutParams.Y;
@@ -79,7 +79,7 @@ namespace WhisperInk.Maui
                     return true;
 
                 case MotionEventActions.Up:
-                    Log.Debug(TAG, ">>> Кнопка ОТПУЩЕНА.");
+                    Log.Debug(TAG, ">>> Button RELEASED.");
 
                     // Запускаем асинхронную задачу в фоне (fire-and-forget), 
                     // не блокируя возврат true и работу UI
@@ -91,13 +91,13 @@ namespace WhisperInk.Maui
                         }
                         catch (Exception ex)
                         {
-                            Log.Error(TAG, $"Критическая ошибка при остановке/обработке: {ex.Message}");
+                            Log.Error(TAG, $"Critical error during shutdown/processing: {ex.Message}");
                         }
                     });
                     return true; // UI мгновенно "отпускает" кнопку!
 
                 case MotionEventActions.Cancel:
-                    Log.Debug(TAG, ">>> Касание ОТМЕНЕНО системой.");
+                    Log.Debug(TAG, ">>> Touch CANCELLED by the system.");
                     _ = Task.Run(async () => 
                     {
                         await StopRecordingAndDiscardAsync();
@@ -110,7 +110,7 @@ namespace WhisperInk.Maui
 
         private async Task StopRecordingAndDiscardAsync() // Сделали метод асинхронным
         {
-            Log.Debug(TAG, "Запись отменена (например, свернули приложение). Удаляем данные.");
+            Log.Debug(TAG, "Recording canceled (e.g., app was minimized). Deleting data.");
     
             if (!_isRecording) return;
 
@@ -132,7 +132,7 @@ namespace WhisperInk.Maui
             }
             catch (Exception ex)
             {
-                Log.Error(TAG, $"Ошибка при освобождении микрофона: {ex.Message}");
+                Log.Error(TAG, $"Error releasing the microphone: {ex.Message}");
             }
 
             // 4. Уничтожаем записанные данные
@@ -144,7 +144,7 @@ namespace WhisperInk.Maui
             }
             catch (Exception ex)
             {
-                Log.Error(TAG, $"Ошибка при закрытии потока: {ex.Message}");
+                Log.Error(TAG, $"Stream closing error: {ex.Message}");
             }
         }
         private void StartRecording()
@@ -155,7 +155,7 @@ namespace WhisperInk.Maui
             // одновременные нажатия, пока фоновый поток запускается
             _isRecording = true;
 
-            LogService.Log("Начало записи...");
+            LogService.Log("Start of recording...");
 
             // Отправляем всю работу с железом в фон
             _recordingTask = Task.Run(() =>
@@ -190,7 +190,7 @@ namespace WhisperInk.Maui
                 }
                 catch (Exception ex) 
                 { 
-                    Log.Error(TAG, $"!!! ОШИБКА StartRecording: {ex.Message}");
+                    Log.Error(TAG, $"!!! ERROR StartRecording: {ex.Message}");
                     // В случае ошибки сбрасываем флаг, чтобы можно было попробовать снова
                     _isRecording = false; 
                 }
@@ -219,13 +219,13 @@ namespace WhisperInk.Maui
             
             if (pcmData.Length == 0)
             {
-                Log.Warn(TAG, "Записан пустой аудиофайл, отправка отменена.");
+                Log.Warn(TAG, "An empty audio file was recorded; sending was canceled.");
                 return;
             }
 
             // 3. Создаем WAV-файл в памяти
             byte[] wavData = await Task.Run(() => WavHelper.CreateWavFile(pcmData, 16000, 1, 16));
-            Log.Debug(TAG, $"WAV-файл создан в памяти, размер: {wavData.Length} байт.");
+            Log.Debug(TAG, $"WAV file created in memory, size: {wavData.Length} byte.");
 
             // 4. Отправляем в API
             string? transcribedText = await TranscribeAudioAsync(wavData);
@@ -235,13 +235,13 @@ namespace WhisperInk.Maui
             {
                 if (!string.IsNullOrEmpty(transcribedText))
                 {
-                    Log.Debug(TAG, $"Получен текст: {transcribedText}");
+                    Log.Debug(TAG, $"Received text: {transcribedText}");
                     CopyToClipboardAndNotify(transcribedText);
                 }
                 else
                 {
-                    Log.Error(TAG, "Не удалось получить текст от API (возможно, пустой ответ).");
-                    LogService.Log("Ошибка распознавания");
+                    Log.Error(TAG, "Failed to retrieve text from the API (response may be empty).");
+                    LogService.Log("Recognition error");
                 }
             });
         }
@@ -254,8 +254,8 @@ namespace WhisperInk.Maui
 
             if (string.IsNullOrEmpty(mistralApiKey))
             {
-                Log.Error(TAG, "API ключ не установлен! Пожалуйста, задайте его в приложении.");
-                LogService.Log("API key not set");
+                Log.Error(TAG, "API key is not set! Please specify it in the application.");
+                LogService.Log("API key is not set! Please specify it in the application.");
                 return null;
             }
 
@@ -286,8 +286,8 @@ namespace WhisperInk.Maui
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    LogService.Log($"Ошибка API: {(int)response.StatusCode} - {responseString}");
-                    Log.Error(TAG, $"Ошибка API: {(int)response.StatusCode} - {responseString}");
+                    LogService.Log($"API Error: {(int)response.StatusCode} - {responseString}");
+                    Log.Error(TAG, $"API Error: {(int)response.StatusCode} - {responseString}");
                     return null;
                 }
 
@@ -296,12 +296,12 @@ namespace WhisperInk.Maui
             }
             catch (Exception ex)
             {
-                LogService.Log($"Сетевая ошибка: {ex.Message}");
-                Log.Error(TAG, $"Сетевая ошибка: {ex.Message}");
+                LogService.Log($"Network error: {ex.Message}");
+                Log.Error(TAG, $"Network error: {ex.Message}");
                 if (ex.InnerException != null)
                 {
-                    LogService.Log($"Внутреннее исключение: {ex.InnerException.Message}");
-                    Log.Error(TAG, $"Внутреннее исключение: {ex.InnerException.Message}");
+                    LogService.Log($"Internal exception: {ex.InnerException.Message}");
+                    Log.Error(TAG, $"Internal exception: {ex.InnerException.Message}");
                 }
                 return null;
             }
@@ -318,7 +318,7 @@ namespace WhisperInk.Maui
                 }
 
                 // Если настройки изменились или клиента нет — создаем новый
-                Log.Debug(TAG, "Настройки прокси изменились (или первый запуск). Пересоздаем HttpClient.");
+                Log.Debug(TAG, "Proxy settings have changed (or first launch). Recreating HttpClient.");
 
                 // Если был старый клиент — можно его корректно закрыть (хотя в статике это не обязательно, GC заберет)
                 _sharedClient?.Dispose();
@@ -377,8 +377,8 @@ namespace WhisperInk.Maui
             }
             catch (Exception ex)
             {
-                LogService.Log($"Ошибка прокси: {ex.Message}. Возврат к прямому подключению.");
-                Log.Error(TAG, $"Ошибка прокси: {ex.Message}. Возврат к прямому подключению.");
+                LogService.Log($"Proxy error: {ex.Message}. Reverting to direct connection.");
+                Log.Error(TAG, $"Proxy error: {ex.Message}. Reverting to direct connection.");
                 return new HttpClient();
             }
         }
@@ -408,13 +408,13 @@ namespace WhisperInk.Maui
                     {
                         clipboardManager.PrimaryClip = clipData;
                         // Toast тоже вызываем отсюда, он уже умеет обрабатывать потоки
-                        LogService.Log("Текст скопирован!");
+                        LogService.Log("Text copied!");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(TAG, $"Ошибка копирования в буфер: {ex.Message}");
-                    LogService.Log("Ошибка при копировании");
+                    Log.Error(TAG, $"Copying to clipboard error: {ex.Message}");
+                    LogService.Log("Copying to clipboard error");
                 }
             }
         }
@@ -423,7 +423,7 @@ namespace WhisperInk.Maui
         {
             try
             {
-                Log.Debug(TAG, ">>> Начинаем создание кнопки...");
+                Log.Debug(TAG, ">>> Starting button creation...");
                 _windowManager = GetSystemService(WindowService).JavaCast<IWindowManager>();
 
                 _floatingButton = new ImageView(this);
@@ -437,7 +437,7 @@ namespace WhisperInk.Maui
                 }
                 catch
                 {
-                    Log.Warn(TAG, ">>> Ресурс 'mic_icon' не найден. Используется серый фон.");
+                    Log.Warn(TAG, ">>> Resource 'mic_icon' not found. Using gray background..");
                     _floatingButton.SetBackgroundColor(Color.ParseColor("#888888")); // Сделаем непрозрачным серым
                 }
 
@@ -453,11 +453,11 @@ namespace WhisperInk.Maui
                 _layoutParams.Y = 200;
 
                 _windowManager.AddView(_floatingButton, _layoutParams);
-                Log.Debug(TAG, ">>> КНОПКА УСПЕШНО ДОБАВЛЕНА НА ЭКРАН!");
+                Log.Debug(TAG, ">>> BUTTON SUCCESSFULLY ADDED TO THE SCREEN!");
             }
             catch (Exception ex)
             {
-                Log.Error(TAG, $"!!! ОШИБКА в CreateFloatingButton: {ex.Message}");
+                Log.Error(TAG, $"!!! ERROR в CreateFloatingButton: {ex.Message}");
             }
         }
 
@@ -491,12 +491,12 @@ namespace WhisperInk.Maui
             var channel = new NotificationChannel("WhisperInkServiceChannel", channelName, NotificationImportance.Low);
             var manager = (NotificationManager)GetSystemService(NotificationService);
             manager.CreateNotificationChannel(channel);
-            Log.Debug(TAG, ">>> Канал уведомлений создан.");
+            Log.Debug(TAG, ">>> Notification channel created.");
         }
         public override void OnDestroy()
         {
             base.OnDestroy();
-            Log.Debug(TAG, ">>> OnDestroy вызван. Удаляем кнопку.");
+            Log.Debug(TAG, ">>> OnDestroy called. Removing the button.");
             if (_floatingButton != null && _windowManager != null)
             {
                 _windowManager.RemoveView(_floatingButton);
