@@ -1,7 +1,9 @@
-﻿using Android.App;
+﻿using Android.Animation;
+using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.Media;
 using Android.OS;
 using Android.Runtime;
@@ -19,19 +21,24 @@ using System.Net;
 
 namespace WhisperInk.Maui
 {
-    // Добавляем ", View.IOnTouchListener" к объявлению класса
     [Service(ForegroundServiceType = ForegroundService.TypeMicrophone)]
     public class FloatingButtonService : Service, View.IOnTouchListener
     {
         public const string TAG = "WhisperInkDebug";
 
         private IWindowManager? _windowManager;
-        private ImageView? _floatingButton;
+
+        // РАЗДЕЛЯЕМ UI НА ДВА НЕЗАВИСИМЫХ КОМПОНЕНТА
+        private FrameLayout? _rippleContainer; // Невидимый для кликов контейнер для волн (400x400)
+        private ImageView? _floatingButton;    // Сама кликабельная кнопка (150x150)
+
+        private View? _rippleView;
+        private AnimatorSet? _rippleAnimator;
 
         private AudioRecord? _audioRecord;
         private bool _isRecording;
         private Task? _recordingTask;
-        private MemoryStream? _recordingStream; // <-- Используем MemoryStream вместо пути к файлу
+        private MemoryStream? _recordingStream;
 
         private int _initialX;
         private int _initialY;
@@ -39,47 +46,70 @@ namespace WhisperInk.Maui
         private float _initialTouchY;
 
         private static HttpClient? _sharedClient;
-        private static string _lastUsedProxyConfig = "N/A"; // Специальное значение для инициализации
-        private static readonly object _clientLock = new object(); // Для потокобезопасности
+        private static string _lastUsedProxyConfig = "N/A";
+        private static readonly object _clientLock = new object();
 
-        private WindowManagerLayoutParams? _layoutParams; // Вынесли, чтобы менять положение
+        // РАЗДЕЛЬНЫЕ ПАРАМЕТРЫ ОКОН
+        private WindowManagerLayoutParams? _buttonLayoutParams;
+        private WindowManagerLayoutParams? _rippleLayoutParams;
+
+        // Константы размеров, чтобы легко было считать смещение
+        private const int BUTTON_SIZE = 150;
+        private const int RIPPLE_SIZE = 400;
 
         public override IBinder? OnBind(Intent? intent) => null;
         
         public bool OnTouch(View? v, MotionEvent? e)
         {
-            if (e == null || _layoutParams == null) return false;
+            if (e == null || _buttonLayoutParams == null || _rippleLayoutParams == null) return false;
+
             switch (e.Action)
             {
                 case MotionEventActions.Down:
                     Log.Debug(TAG, ">>> Button PRESSED. Starting recording....");
-                    // Сохраняем начальные позиции
-                    _initialX = _layoutParams.X;
-                    _initialY = _layoutParams.Y;
+
+                    try
+                    {
+                        Microsoft.Maui.Devices.HapticFeedback.Default.Perform(Microsoft.Maui.Devices.HapticFeedbackType.Click);
+                    }
+                    catch
+                    {
+                        // Игнорируем ошибку, если на устройстве физически нет вибромотора 
+                        // или пользователь отключил тактильный отклик в настройках системы
+                    }
+
+                    _initialX = _buttonLayoutParams.X;
+                    _initialY = _buttonLayoutParams.Y;
                     _initialTouchX = e.RawX;
                     _initialTouchY = e.RawY;
 
+                    StartRippleAnimation();
                     StartRecording();
                     return true;
 
                 case MotionEventActions.Move:
-                    // Рассчитываем смещение от начальной точки касания
                     var dX = e.RawX - _initialTouchX;
                     var dY = e.RawY - _initialTouchY;
 
-                    // Порог, чтобы случайное дрожание пальца не считалось перетаскиванием
                     const float DragThreshold = 10.0f;
                     if (Math.Abs(dX) > DragThreshold || Math.Abs(dY) > DragThreshold)
                     {
-                        // Обновляем параметры положения окна
-                        _layoutParams.X = _initialX + (int)dX;
-                        _layoutParams.Y = _initialY + (int)dY;
-                        _windowManager?.UpdateViewLayout(_floatingButton, _layoutParams);
+                        // 1. Двигаем саму кнопку
+                        _buttonLayoutParams.X = _initialX + (int)dX;
+                        _buttonLayoutParams.Y = _initialY + (int)dY;
+                        _windowManager?.UpdateViewLayout(_floatingButton, _buttonLayoutParams);
+
+                        // 2. Синхронно двигаем слой с волнами (учитывая центрирование)
+                        int offset = (RIPPLE_SIZE - BUTTON_SIZE) / 2;
+                        _rippleLayoutParams.X = _buttonLayoutParams.X - offset;
+                        _rippleLayoutParams.Y = _buttonLayoutParams.Y - offset;
+                        _windowManager?.UpdateViewLayout(_rippleContainer, _rippleLayoutParams);
                     }
                     return true;
 
                 case MotionEventActions.Up:
                     Log.Debug(TAG, ">>> Button RELEASED.");
+                    StopRippleAnimation();
 
                     // Запускаем асинхронную задачу в фоне (fire-and-forget), 
                     // не блокируя возврат true и работу UI
@@ -98,55 +128,69 @@ namespace WhisperInk.Maui
 
                 case MotionEventActions.Cancel:
                     Log.Debug(TAG, ">>> Touch CANCELLED by the system.");
-                    _ = Task.Run(async () => 
-                    {
-                        await StopRecordingAndDiscardAsync();
-                    });
-                    return true;            
+                    StopRippleAnimation();
+
+                    _ = Task.Run(async () => { await StopRecordingAndDiscardAsync(); });
+                    return true;
             }
 
             return false;
         }
 
-        private async Task StopRecordingAndDiscardAsync() // Сделали метод асинхронным
+        private void StartRippleAnimation()
         {
-            Log.Debug(TAG, "Recording canceled (e.g., app was minimized). Deleting data.");
-    
-            if (!_isRecording) return;
+            if (_rippleView == null) return;
 
-            // 1. Даем сигнал фоновому потоку остановиться
-            _isRecording = false;
+            _rippleView.Visibility = ViewStates.Visible;
 
-            // 2. ОБЯЗАТЕЛЬНО ждем, пока фоновый цикл while() корректно завершит свой последний круг
-            if (_recordingTask != null)
+            var scaleX = ObjectAnimator.OfFloat(_rippleView, "scaleX", 1f, 2.8f);
+            scaleX.RepeatCount = ValueAnimator.Infinite;
+            scaleX.RepeatMode = ValueAnimatorRepeatMode.Restart;
+            scaleX.SetDuration(1200);
+
+            var scaleY = ObjectAnimator.OfFloat(_rippleView, "scaleY", 1f, 2.8f);
+            scaleY.RepeatCount = ValueAnimator.Infinite;
+            scaleY.RepeatMode = ValueAnimatorRepeatMode.Restart;
+            scaleY.SetDuration(1200);
+
+            // Начинаем анимацию с 85% видимости, чтобы эффект был ярче
+            var alpha = ObjectAnimator.OfFloat(_rippleView, "alpha", 0.85f, 0f);
+            alpha.RepeatCount = ValueAnimator.Infinite;
+            alpha.RepeatMode = ValueAnimatorRepeatMode.Restart;
+            alpha.SetDuration(1200);
+
+            _rippleAnimator = new AnimatorSet();
+            _rippleAnimator.PlayTogether(scaleX, scaleY, alpha);
+            _rippleAnimator.Start();
+        }
+
+        private void StopRippleAnimation()
+        {
+            if (_rippleAnimator != null)
             {
-                await _recordingTask; 
+                _rippleAnimator.Cancel();
+                _rippleAnimator = null;
             }
 
-            // 3. Теперь, когда никто не читает и не пишет, безопасно освобождаем ресурсы
-            try
+            if (_rippleView != null)
             {
-                _audioRecord?.Stop();
-                _audioRecord?.Release();
-                _audioRecord = null;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(TAG, $"Error releasing the microphone: {ex.Message}");
-            }
-
-            // 4. Уничтожаем записанные данные
-            try
-            {
-                _recordingStream?.Close();
-                _recordingStream?.Dispose(); // Освобождаем память
-                _recordingStream = null;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(TAG, $"Stream closing error: {ex.Message}");
+                _rippleView.Visibility = ViewStates.Invisible;
+                _rippleView.ScaleX = 1f;
+                _rippleView.ScaleY = 1f;
+                _rippleView.Alpha = 1f;
             }
         }
+
+        private async Task StopRecordingAndDiscardAsync()
+        {
+            if (!_isRecording) return;
+            _isRecording = false;
+            if (_recordingTask != null) await _recordingTask;
+
+            try { _audioRecord?.Stop(); _audioRecord?.Release(); _audioRecord = null; } catch { }
+            try { _recordingStream?.Close(); _recordingStream?.Dispose(); _recordingStream = null; } catch { }
+        }
+
         private void StartRecording()
         {
             if (_isRecording) return;
@@ -407,8 +451,18 @@ namespace WhisperInk.Maui
                     if (clipboardManager != null)
                     {
                         clipboardManager.PrimaryClip = clipData;
-                        // Toast тоже вызываем отсюда, он уже умеет обрабатывать потоки
                         LogService.Log("Text copied!");
+
+                        // --- НОВОЕ: Длинная вибрация при успешном распознавании и копировании ---
+                        try
+                        {
+                            Microsoft.Maui.Devices.HapticFeedback.Default.Perform(Microsoft.Maui.Devices.HapticFeedbackType.LongPress);
+                        }
+                        catch
+                        {
+                            // Игнорируем ошибку, если вибрация не поддерживается или отключена
+                        }
+                        // -----------------------------------------------------------------------
                     }
                 }
                 catch (Exception ex)
@@ -426,6 +480,42 @@ namespace WhisperInk.Maui
                 Log.Debug(TAG, ">>> Starting button creation...");
                 _windowManager = GetSystemService(WindowService).JavaCast<IWindowManager>();
 
+                int startX = 100;
+                int startY = 200;
+                int offset = (RIPPLE_SIZE - BUTTON_SIZE) / 2;
+
+                // --- 1. СОЗДАЕМ ОКНО ДЛЯ АНИМАЦИИ (ПРОЗРАЧНОЕ ДЛЯ КЛИКОВ) ---
+                _rippleContainer = new FrameLayout(this);
+                _rippleView = new View(this);
+                var rippleDrawable = new GradientDrawable();
+                rippleDrawable.SetShape(ShapeType.Oval);
+                // Используем насыщенный красный с прозрачностью 80% (CC в HEX)
+                rippleDrawable.SetColor(Color.ParseColor("#CCFF2323"));
+                _rippleView.Background = rippleDrawable;
+                _rippleView.Visibility = ViewStates.Invisible;
+
+                var rippleViewParams = new FrameLayout.LayoutParams(BUTTON_SIZE, BUTTON_SIZE)
+                {
+                    Gravity = GravityFlags.Center
+                };
+                _rippleContainer.AddView(_rippleView, rippleViewParams);
+
+                _rippleLayoutParams = new WindowManagerLayoutParams(
+                    RIPPLE_SIZE, RIPPLE_SIZE,
+                    WindowManagerTypes.ApplicationOverlay,
+                    // ↓↓↓ ДОБАВЛЯЕМ ФЛАГ LayoutNoLimits СЮДА ↓↓↓
+                    WindowManagerFlags.NotFocusable | WindowManagerFlags.NotTouchable | WindowManagerFlags.LayoutNoLimits,
+                    Format.Translucent
+                );
+
+                _rippleLayoutParams.Gravity = GravityFlags.Left | GravityFlags.Top;
+                _rippleLayoutParams.X = startX - offset;
+                _rippleLayoutParams.Y = startY - offset;
+
+                _windowManager.AddView(_rippleContainer, _rippleLayoutParams);
+
+
+                // --- 2. СОЗДАЕМ САМУ КНОПКУ (КЛИКАБЕЛЬНУЮ) ---
                 _floatingButton = new ImageView(this);
                 // ↓↓↓ ПОДПИСЫВАЕМСЯ НА СОБЫТИЯ КАСАНИЯ ↓↓↓
                 _floatingButton.SetOnTouchListener(this);
@@ -441,19 +531,22 @@ namespace WhisperInk.Maui
                     _floatingButton.SetBackgroundColor(Color.ParseColor("#888888")); // Сделаем непрозрачным серым
                 }
 
-                _layoutParams = new WindowManagerLayoutParams(
-                    150, 150,
+                _buttonLayoutParams = new WindowManagerLayoutParams(
+                    BUTTON_SIZE, BUTTON_SIZE,
                     WindowManagerTypes.ApplicationOverlay,
-                    WindowManagerFlags.NotFocusable,
+                    // ↓↓↓ Добавляем флаг LayoutNoLimits и для самой кнопки ↓↓↓
+                    WindowManagerFlags.NotFocusable | WindowManagerFlags.LayoutNoLimits,
                     Format.Translucent
                 );
 
-                _layoutParams.Gravity = GravityFlags.Left | GravityFlags.Top;
-                _layoutParams.X = 100;
-                _layoutParams.Y = 200;
+                _buttonLayoutParams.Gravity = GravityFlags.Left | GravityFlags.Top;
+                _buttonLayoutParams.X = startX;
+                _buttonLayoutParams.Y = startY;
 
-                _windowManager.AddView(_floatingButton, _layoutParams);
-                Log.Debug(TAG, ">>> BUTTON SUCCESSFULLY ADDED TO THE SCREEN!");
+                // Добавляем кнопку ВТОРОЙ, чтобы она была поверх контейнера с анимацией (Z-index)
+                _windowManager.AddView(_floatingButton, _buttonLayoutParams);
+
+                Log.Debug(TAG, ">>> BUTTON AND RIPPLE SEPARATED SUCCESSFULLY!");
             }
             catch (Exception ex)
             {
@@ -496,10 +589,11 @@ namespace WhisperInk.Maui
         public override void OnDestroy()
         {
             base.OnDestroy();
-            Log.Debug(TAG, ">>> OnDestroy called. Removing the button.");
-            if (_floatingButton != null && _windowManager != null)
+            // Удаляем оба окна
+            if (_windowManager != null)
             {
-                _windowManager.RemoveView(_floatingButton);
+                if (_rippleContainer != null) _windowManager.RemoveView(_rippleContainer);
+                if (_floatingButton != null) _windowManager.RemoveView(_floatingButton);
             }
         }
     }
