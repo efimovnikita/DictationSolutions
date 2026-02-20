@@ -10,14 +10,11 @@ using Android.Runtime;
 using Android.Util;
 using Android.Views;
 using Android.Widget;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Color = Android.Graphics.Color;
-using Path = System.IO.Path;
 using View = Android.Views.View;
-using Clipboard = Android.Content.ClipboardManager;
-using Microsoft.Maui.Storage;
-using System.Net;
 
 namespace WhisperInk.Maui
 {
@@ -49,6 +46,9 @@ namespace WhisperInk.Maui
         private static string _lastUsedProxyConfig = "N/A";
         private static readonly object _clientLock = new object();
 
+        private const string ChatApiUrl = "https://api.mistral.ai/v1/chat/completions"; //
+        private const string ChatModel = "mistral-medium-latest"; // Или mistral-small-latest, если требуется
+
         // РАЗДЕЛЬНЫЕ ПАРАМЕТРЫ ОКОН
         private WindowManagerLayoutParams? _buttonLayoutParams;
         private WindowManagerLayoutParams? _rippleLayoutParams;
@@ -57,11 +57,181 @@ namespace WhisperInk.Maui
         private const int BUTTON_SIZE = 150;
         private const int RIPPLE_SIZE = 400;
 
+        private async Task<string?> SendChatCompletionAsync(string context, string instruction)
+        {
+            try
+            {
+                // Достаем настройки из Preferences MAUI
+                string apiKey = Preferences.Get(MainPage.ApiKeyPreferenceKey, string.Empty);
+                string systemPrompt = Preferences.Get(MainPage.SystemPromptKey, "You are a precise execution engine. Output ONLY the direct result of the task.");
+
+                if (string.IsNullOrWhiteSpace(apiKey))
+                {
+                    Log.Warn("MistralApi", "API Key is missing!");
+                    return null;
+                }
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, ChatApiUrl); //
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey); //
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json")); //
+
+                // Формируем финальный текст для отправки
+                string finalContent;
+                if (!string.IsNullOrWhiteSpace(context))
+                {
+                    finalContent = $"Context:\n'''\n{context}\n'''\n\nTask: {instruction}"; //
+                }
+                else
+                {
+                    finalContent = instruction;
+                }
+
+                // Используем анонимные объекты, как в Windows-версии
+                var payload = new
+                {
+                    model = ChatModel,
+                    messages = new object[]
+                    {
+                new
+                {
+                    role = "system",
+                    content = systemPrompt
+                },
+                new
+                {
+                    role = "user",
+                    content = finalContent
+                }
+                    },
+                    temperature = 0.3,
+                };
+
+                string jsonBody = JsonSerializer.Serialize(payload);
+                request.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+
+                var currentProxyConfig = Preferences.Get("ProxyConfig", string.Empty);
+
+                var client = GetSmartHttpClient(currentProxyConfig);
+
+                var response = await client.SendAsync(request);
+                string responseString = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Log.Warn("MistralApi", $"Chat API Error: {response.StatusCode} - {responseString}");
+                    return null;
+                }
+
+                // Парсинг ответа
+                using var doc = JsonDocument.Parse(responseString);
+                if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+                {
+                    var firstChoice = choices[0];
+                    if (firstChoice.TryGetProperty("message", out var message) && 
+                        message.TryGetProperty("content", out var content))
+                    {
+                        return content.GetString()?.Trim().Trim('"');
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("MistralApi", $"Chat API Network error: {ex.Message}");
+            }
+            return null;
+        }
+
+        // --- НОВЫЙ МЕТОД: Безопасное чтение буфера обмена ---
+        private string GetClipboardTextSafely()
+        {
+            try
+            {
+                // Явно указываем глобальный контекст MAUI и полные пути к нативным классам Android
+                var clipboard = Android.App.Application.Context.GetSystemService(Android.Content.Context.ClipboardService) as Android.Content.ClipboardManager;
+
+                if (clipboard != null && clipboard.HasPrimaryClip)
+                {
+                    var clip = clipboard.PrimaryClip;
+                    if (clip != null && clip.ItemCount > 0)
+                    {
+                        var text = clip.GetItemAt(0)?.Text;
+                        return text ?? string.Empty;
+                    }
+                }
+                else
+                {
+                    Log.Warn(TAG, "Буфер обмена пуст или сервис недоступен.");
+                }
+            }
+            catch (Java.Lang.SecurityException secEx)
+            {
+                // Ловим SecurityException, если Android всё-таки заблокировал доступ
+                Log.Warn(TAG, $"SecurityException при доступе к буферу обмена: {secEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(TAG, $"Ошибка чтения буфера обмена: {ex.Message}");
+            }
+
+            return string.Empty; // Если ничего нет или ошибка, возвращаем пустую строку
+        }
+        // --- КОНЕЦ НОВОГО МЕТОДА ---
+
+        // --- НОВЫЙ МЕТОД ОБНОВЛЕНИЯ ИКОНКИ ---
+        private void UpdateButtonIcon(bool isCommandMode)
+        {
+            if (_floatingButton == null) return;
+
+            try
+            {
+                if (isCommandMode)
+                {
+                    // Ожидается наличие robot_icon в ресурсах
+                    _floatingButton.SetImageResource(Resource.Drawable.creative);
+                }
+                else
+                {
+                    _floatingButton.SetImageResource(Resource.Drawable.mic_icon);
+                }
+                _floatingButton.SetBackgroundColor(Color.Transparent);
+            }
+            catch
+            {
+                Log.Warn(TAG, ">>> Resource icon not found. Using gray background..");
+                _floatingButton.SetBackgroundColor(Color.ParseColor(isCommandMode ? "#336699" : "#888888")); // Разные цвета для фоллбэка
+            }
+        }
+
+        // --- НОВЫЙ ОБРАБОТЧИК СОБЫТИЯ ---
+        private void MainPage_OnModeChanged(object? sender, bool isCommandMode)
+        {
+            // Обязательно выполняем обновление UI в главном потоке Android
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                UpdateButtonIcon(isCommandMode);
+            });
+        }
+
+        private void SetRippleWaitingState()
+        {
+            // На всякий случай очищаем фон контейнера, если он там остался
+            if (_rippleContainer != null)
+                _rippleContainer.SetBackgroundColor(Android.Graphics.Color.Transparent);
+
+            // Меняем цвет самого круга (овала) на желтый/оранжевый
+            if (_rippleView != null && _rippleView.Background is GradientDrawable drawable)
+            {
+                drawable.SetColor(Android.Graphics.Color.ParseColor("#CCFFA500")); // Полупрозрачный оранжевый
+            }
+        }
+
         public override IBinder? OnBind(Intent? intent) => null;
         
         public bool OnTouch(View? v, MotionEvent? e)
         {
             if (e == null || _buttonLayoutParams == null || _rippleLayoutParams == null) return false;
+
+            bool isCommandMode = Preferences.Get(MainPage.IsCommandModeKey, false);
 
             switch (e.Action)
             {
@@ -70,7 +240,7 @@ namespace WhisperInk.Maui
 
                     try
                     {
-                        Microsoft.Maui.Devices.HapticFeedback.Default.Perform(Microsoft.Maui.Devices.HapticFeedbackType.Click);
+                        HapticFeedback.Default.Perform(HapticFeedbackType.Click);
                     }
                     catch
                     {
@@ -85,6 +255,14 @@ namespace WhisperInk.Maui
 
                     StartRippleAnimation();
                     StartRecording();
+
+                    // --- НОВОЕ: Временно даем окну фокус, чтобы система разрешила чтение буфера ---
+                    if (isCommandMode && _buttonLayoutParams != null && _windowManager != null)
+                    {
+                        _buttonLayoutParams.Flags &= ~Android.Views.WindowManagerFlags.NotFocusable; // Удаляем флаг
+                        _windowManager.UpdateViewLayout(_floatingButton, _buttonLayoutParams);
+                    }
+
                     return true;
 
                 case MotionEventActions.Move:
@@ -108,30 +286,56 @@ namespace WhisperInk.Maui
                     return true;
 
                 case MotionEventActions.Up:
+                case MotionEventActions.Cancel:
                     Log.Debug(TAG, ">>> Button RELEASED.");
-                    StopRippleAnimation();
 
-                    // Запускаем асинхронную задачу в фоне (fire-and-forget), 
-                    // не блокируя возврат true и работу UI
-                    _ = Task.Run(async () => 
+                    // --- НОВОЕ: Захват контекста и подготовка данных ---
+                    string clipboardContext = string.Empty;
+
+                    if (isCommandMode)
                     {
-                        try 
+                        // В командном режиме меняем цвет пульсации
+                        clipboardContext = GetClipboardTextSafely();
+                        Log.Debug(TAG, $"Захвачен текст из буфера: {clipboardContext.Length} символов");
+
+                        SetRippleWaitingState();
+
+                        // --- ВОЗВРАЩАЕМ ФЛАГ ТОЛЬКО ЕСЛИ СНИМАЛИ ЕГО ---
+                        if (_buttonLayoutParams != null && _windowManager != null)
                         {
-                            await StopAndProcessRecordingAsync();
+                            _buttonLayoutParams.Flags |= Android.Views.WindowManagerFlags.NotFocusable;
+                            _windowManager.UpdateViewLayout(_floatingButton, _buttonLayoutParams);
+                        }
+                    }
+                    else
+                    {
+                        // В обычном режиме диктовки сразу останавливаем анимацию
+                        StopRippleAnimation();
+                    }
+
+                    // --- НОВОЕ: Сразу возвращаем флаг NotFocusable обратно ---
+                    if (_buttonLayoutParams != null && _windowManager != null)
+                    {
+                        _buttonLayoutParams.Flags |= Android.Views.WindowManagerFlags.NotFocusable; // Возвращаем флаг
+                        _windowManager.UpdateViewLayout(_floatingButton, _buttonLayoutParams);
+                    }
+
+                    // Запускаем асинхронную задачу в фоне
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // ПЕРЕДАЕМ переменные режима и буфера обмена в метод!
+                            await StopAndProcessRecordingAsync(isCommandMode, clipboardContext);
                         }
                         catch (Exception ex)
                         {
                             Log.Error(TAG, $"Critical error during shutdown/processing: {ex.Message}");
                         }
                     });
+                    
                     return true; // UI мгновенно "отпускает" кнопку!
 
-                case MotionEventActions.Cancel:
-                    Log.Debug(TAG, ">>> Touch CANCELLED by the system.");
-                    StopRippleAnimation();
-
-                    _ = Task.Run(async () => { await StopRecordingAndDiscardAsync(); });
-                    return true;
             }
 
             return false;
@@ -178,17 +382,19 @@ namespace WhisperInk.Maui
                 _rippleView.ScaleX = 1f;
                 _rippleView.ScaleY = 1f;
                 _rippleView.Alpha = 1f;
+
+                // ВАЖНО: Возвращаем исходный красный цвет для следующей записи
+                if (_rippleView.Background is GradientDrawable drawable)
+                {
+                    drawable.SetColor(Android.Graphics.Color.ParseColor("#CCFF2323"));
+                }
             }
-        }
 
-        private async Task StopRecordingAndDiscardAsync()
-        {
-            if (!_isRecording) return;
-            _isRecording = false;
-            if (_recordingTask != null) await _recordingTask;
-
-            try { _audioRecord?.Stop(); _audioRecord?.Release(); _audioRecord = null; } catch { }
-            try { _recordingStream?.Close(); _recordingStream?.Dispose(); _recordingStream = null; } catch { }
+            // Железобетонно убираем фон контейнера
+            if (_rippleContainer != null)
+            {
+                _rippleContainer.SetBackgroundColor(Android.Graphics.Color.Transparent);
+            }
         }
 
         private void StartRecording()
@@ -212,7 +418,7 @@ namespace WhisperInk.Maui
                     var audioSource = AudioSource.Mic;
                     var sampleRate = 16000;
                     var channelConfig = ChannelIn.Mono;
-                    var audioFormat = Encoding.Pcm16bit;
+                    var audioFormat = Android.Media.Encoding.Pcm16bit;
                     var bufferSize = AudioRecord.GetMinBufferSize(sampleRate, channelConfig, audioFormat);
 
                     // Теперь инициализация железа не тормозит интерфейс
@@ -241,14 +447,14 @@ namespace WhisperInk.Maui
             });
         }
 
-        private async Task StopAndProcessRecordingAsync()
+        private async Task StopAndProcessRecordingAsync(bool isCommandMode, string clipboardContext)
         {
             if (!_isRecording || _recordingStream == null) return;
 
             // 1. Останавливаем запись
             _isRecording = false;
 
-            if (_recordingTask != null) 
+            if (_recordingTask != null)
             {
                 await _recordingTask; // Гарантированно дожидаемся завершения потока
             }
@@ -260,34 +466,87 @@ namespace WhisperInk.Maui
             // 2. Получаем сырые PCM данные из MemoryStream
             byte[] pcmData = _recordingStream.ToArray();
             _recordingStream.Close(); // Освобождаем память
-            
+
             if (pcmData.Length == 0)
             {
                 Log.Warn(TAG, "An empty audio file was recorded; sending was canceled.");
+                // Гарантированно убираем анимацию, если выходим раньше
+                MainThread.BeginInvokeOnMainThread(() => StopRippleAnimation());
                 return;
             }
 
-            // 3. Создаем WAV-файл в памяти
-            byte[] wavData = await Task.Run(() => WavHelper.CreateWavFile(pcmData, 16000, 1, 16));
-            Log.Debug(TAG, $"WAV file created in memory, size: {wavData.Length} byte.");
-
-            // 4. Отправляем в API
-            string? transcribedText = await TranscribeAudioAsync(wavData);
-
-            // 5. Обрабатываем результат (Важно: вызов UI-методов должен быть в главном потоке)
-            MainThread.BeginInvokeOnMainThread(() =>
+            try
             {
-                if (!string.IsNullOrEmpty(transcribedText))
+                // 3. Создаем WAV-файл в памяти
+                byte[] wavData = await Task.Run(() => WavHelper.CreateWavFile(pcmData, 16000, 1, 16));
+                Log.Debug(TAG, $"WAV file created in memory, size: {wavData.Length} byte.");
+
+                // 4. Отправляем в API транскрибации (в фоне)
+                string? transcribedText = await TranscribeAudioAsync(wavData);
+
+                if (string.IsNullOrEmpty(transcribedText))
                 {
-                    Log.Debug(TAG, $"Received text: {transcribedText}");
-                    CopyToClipboardAndNotify(transcribedText);
+                    Log.Error(TAG, "Failed to retrieve text from the API (response may be empty).");
+                    MainThread.BeginInvokeOnMainThread(() => LogService.Log("Recognition error"));
+                    return; // Прерываем выполнение, если транскрибация пуста
+                }
+
+                Log.Debug(TAG, $"Received transcribed text: {transcribedText}");
+
+                // 5. РАЗВЕТВЛЕНИЕ ЛОГИКИ
+                if (isCommandMode)
+                {
+                    // --- КОМАНДНЫЙ РЕЖИМ ---
+                    Log.Debug(TAG, "Command Mode: Sending data to LLM...");
+
+                    // Делаем второй сетевой запрос в фоне (не блокируя UI!)
+                    string? llmResponse = await SendChatCompletionAsync(clipboardContext, transcribedText);
+
+                    if (!string.IsNullOrEmpty(llmResponse))
+                    {
+                        // Переходим в UI-поток только для работы с буфером обмена и вибрацией
+                        await MainThread.InvokeOnMainThreadAsync(async () =>
+                        {
+                            await Microsoft.Maui.ApplicationModel.DataTransfer.Clipboard.Default.SetTextAsync(llmResponse);
+                            HapticFeedback.Default.Perform(HapticFeedbackType.LongPress);
+                            LogService.Log("AI response copied to clipboard");
+                        });
+                    }
+                    else
+                    {
+                        Log.Error(TAG, "LLM returned an empty response.");
+                        MainThread.BeginInvokeOnMainThread(() => LogService.Log("AI Error"));
+                    }
                 }
                 else
                 {
-                    Log.Error(TAG, "Failed to retrieve text from the API (response may be empty).");
-                    LogService.Log("Recognition error");
+                    // --- РЕЖИМ ДИКТОВКИ (Стандартный) ---
+                    // Переходим в UI-поток
+                    await MainThread.InvokeOnMainThreadAsync(async () =>
+                    {
+                        // Если ваш старый метод CopyToClipboardAndNotify делал что-то важное 
+                        // (например, показывал Toast), можете использовать его здесь.
+                        // Иначе используем стандартный вызов:
+                        await Microsoft.Maui.ApplicationModel.DataTransfer.Clipboard.Default.SetTextAsync(transcribedText);
+                        HapticFeedback.Default.Perform(HapticFeedbackType.Click);
+                        LogService.Log("Dictation copied to clipboard");
+                    });
                 }
-            });
+            }
+            catch (Exception ex)
+            {
+                Log.Error(TAG, $"Error during audio processing: {ex.Message}");
+                MainThread.BeginInvokeOnMainThread(() => LogService.Log("Processing error"));
+            }
+            finally
+            {
+                // 6. ГАРАНТИРОВАННАЯ ОСТАНОВКА АНИМАЦИИ
+                // Блок finally выполнится в любом случае (успех или ошибка)
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    StopRippleAnimation();
+                });
+            }
         }
 
         private async Task<string?> TranscribeAudioAsync(byte[] wavFileBytes)
@@ -427,52 +686,6 @@ namespace WhisperInk.Maui
             }
         }
 
-        private void CopyToClipboardAndNotify(string text)
-        {
-            // Оборачиваем ВСЁ взаимодействие с UI-контекстом в главный поток
-            if (MainThread.IsMainThread)
-            {
-                ExecuteCopy(text);
-            }
-            else
-            {
-                MainThread.BeginInvokeOnMainThread(() => ExecuteCopy(text));
-            }
-
-            // Вспомогательный локальный метод, чтобы не дублировать код
-            void ExecuteCopy(string textToCopy)
-            {
-                try
-                {
-                    // Используем нативный API Android
-                    var clipboardManager = (Clipboard)GetSystemService(ClipboardService);
-                    var clipData = ClipData.NewPlainText("WhisperInk Result", textToCopy);
-            
-                    if (clipboardManager != null)
-                    {
-                        clipboardManager.PrimaryClip = clipData;
-                        LogService.Log("Text copied!");
-
-                        // --- НОВОЕ: Длинная вибрация при успешном распознавании и копировании ---
-                        try
-                        {
-                            Microsoft.Maui.Devices.HapticFeedback.Default.Perform(Microsoft.Maui.Devices.HapticFeedbackType.LongPress);
-                        }
-                        catch
-                        {
-                            // Игнорируем ошибку, если вибрация не поддерживается или отключена
-                        }
-                        // -----------------------------------------------------------------------
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(TAG, $"Copying to clipboard error: {ex.Message}");
-                    LogService.Log("Copying to clipboard error");
-                }
-            }
-        }
-
         private void CreateFloatingButton()
         {
             try
@@ -530,6 +743,15 @@ namespace WhisperInk.Maui
                     Log.Warn(TAG, ">>> Resource 'mic_icon' not found. Using gray background..");
                     _floatingButton.SetBackgroundColor(Color.ParseColor("#888888")); // Сделаем непрозрачным серым
                 }
+
+                // --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
+                // Загружаем текущее состояние из Preferences
+                bool isCommandMode = Preferences.Get(MainPage.IsCommandModeKey, false);
+                UpdateButtonIcon(isCommandMode);
+
+                // Подписываемся на смену режима на лету
+                MainPage.OnModeChanged += MainPage_OnModeChanged;
+                // --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
                 _buttonLayoutParams = new WindowManagerLayoutParams(
                     BUTTON_SIZE, BUTTON_SIZE,
@@ -589,6 +811,10 @@ namespace WhisperInk.Maui
         public override void OnDestroy()
         {
             base.OnDestroy();
+
+            // НОВОЕ: Отписываемся от события
+            MainPage.OnModeChanged -= MainPage_OnModeChanged;
+
             // Удаляем оба окна
             if (_windowManager != null)
             {
