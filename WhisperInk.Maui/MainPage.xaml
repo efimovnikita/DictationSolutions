@@ -25,9 +25,16 @@
             <Label Grid.Row="2" Grid.Column="0" 
                    Text="Proxy (Optional):" VerticalOptions="Center" FontSize="14" FontAttributes="Bold" 
                    TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
-            <Entry Grid.Row="2" Grid.Column="1" 
-                   x:Name="ProxyEntry" Placeholder="user:pass@ip:port" ClearButtonVisibility="WhileEditing" />
 
+            <Grid Grid.Row="2" Grid.Column="1" ColumnDefinitions="*, Auto" ColumnSpacing="10">
+                <Entry Grid.Column="0" x:Name="ProxyEntry" Placeholder="user:pass@ip:port" ClearButtonVisibility="WhileEditing" />
+
+                <HorizontalStackLayout Grid.Column="1" VerticalOptions="Center" Spacing="2">
+                    <Label Text="Use" VerticalOptions="Center" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"/>
+                    <CheckBox x:Name="UseProxyCheckBox" VerticalOptions="Center" />
+                </HorizontalStackLayout>
+            </Grid>
+            
             <Label Grid.Row="3" Grid.Column="0" 
                    Text="Operation Mode:" VerticalOptions="Center" FontSize="14" FontAttributes="Bold" 
                    TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />

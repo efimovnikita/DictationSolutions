@@ -6,6 +6,7 @@ namespace WhisperInk.Maui
     {
         public const string ApiKeyPreferenceKey = "MistralApiKey";
         public const string ProxyPreferenceKey = "ProxyConfig";
+        public const string UseProxyPreferenceKey = "UseProxyConfig"; // НОВЫЙ КЛЮЧ
 
         // НОВЫЕ КЛЮЧИ:
         public const string IsCommandModeKey = "IsCommandMode";
@@ -35,6 +36,8 @@ namespace WhisperInk.Maui
             // Загружаем прокси
             var proxyConf = Preferences.Get(ProxyPreferenceKey, string.Empty);
             ProxyEntry.Text = proxyConf;
+
+            UseProxyCheckBox.IsChecked = Preferences.Get(UseProxyPreferenceKey, false);
 
             // НОВОЕ: Загружаем режим и промпт
             bool isCommandMode = Preferences.Get(IsCommandModeKey, false);
@@ -70,6 +73,8 @@ namespace WhisperInk.Maui
                     Preferences.Remove(ProxyPreferenceKey);
                 else
                     Preferences.Set(ProxyPreferenceKey, ProxyEntry.Text.Trim());
+
+                Preferences.Set(UseProxyPreferenceKey, UseProxyCheckBox.IsChecked);
 
                 // НОВОЕ: Сохраняем системный промпт при нажатии Save
                 Preferences.Set(SystemPromptKey, SystemPromptEditor.Text);

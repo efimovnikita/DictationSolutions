@@ -109,7 +109,9 @@ namespace WhisperInk.Maui
                 string jsonBody = JsonSerializer.Serialize(payload);
                 request.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
 
-                var currentProxyConfig = Preferences.Get("ProxyConfig", string.Empty);
+                // НОВОЕ: Читаем состояние чекбокса. Если выключен, прокси игнорируется
+                bool useProxy = Preferences.Get("UseProxyConfig", false);
+                var currentProxyConfig = useProxy ? Preferences.Get("ProxyConfig", string.Empty) : string.Empty;
 
                 var client = GetSmartHttpClient(currentProxyConfig);
 
@@ -552,8 +554,18 @@ namespace WhisperInk.Maui
         private async Task<string?> TranscribeAudioAsync(byte[] wavFileBytes)
         {
             // Получаем ключ из настроек приложения
-            var mistralApiKey = Preferences.Get("MistralApiKey", string.Empty);
-            var currentProxyConfig = Preferences.Get("ProxyConfig", string.Empty);
+            var mistralApiKey = Preferences.Get("MistralApiKey", string.Empty).Trim();
+
+            // Учитываем чекбокс
+            bool useProxy = Preferences.Get("UseProxyConfig", false);
+            LogService.Log($"Use proxy: {useProxy}");
+
+            var currentProxyConfig = useProxy ? Preferences.Get("ProxyConfig", string.Empty) : string.Empty;
+            if (useProxy)
+            {
+                LogService.Log($"Current Proxy Config: {currentProxyConfig}");
+            }
+
 
             if (string.IsNullOrEmpty(mistralApiKey))
             {
