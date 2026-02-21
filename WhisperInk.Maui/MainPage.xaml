@@ -4,56 +4,68 @@
              x:Class="WhisperInk.Maui.MainPage"
              Title="WhisperInk Dashboard">
 
-    <Grid RowDefinitions="55*, 45*">
+    <Grid RowDefinitions="Auto, *">
 
-        <ScrollView Grid.Row="0" VerticalScrollBarVisibility="Always">
-            <VerticalStackLayout Padding="20" Spacing="15">
+        <Grid Grid.Row="0" 
+              ColumnDefinitions="Auto, *" 
+              RowDefinitions="Auto, Auto, Auto, Auto, Auto, Auto, Auto" 
+              RowSpacing="15" 
+              ColumnSpacing="15" 
+              Padding="20">
 
-                <Label Text="Settings" Style="{StaticResource Headline}" FontSize="28" Margin="0,0,0,5" />
+            <Label Grid.Row="0" Grid.ColumnSpan="2" 
+                   Text="Settings" Style="{StaticResource Headline}" FontSize="28" Margin="0,0,0,5" />
 
-                <Label Text="Mistral API key" FontSize="14" FontAttributes="Bold" TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
-                <Entry x:Name="ApiKeyEntry" Placeholder="Your Mistral API Key" />
+            <Label Grid.Row="1" Grid.Column="0" 
+                   Text="Mistral API key:" VerticalOptions="Center" FontSize="14" FontAttributes="Bold" 
+                   TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
+            <Entry Grid.Row="1" Grid.Column="1" 
+                   x:Name="ApiKeyEntry" Placeholder="Your Mistral API Key" />
 
-                <Label Text="Proxy (Optional)" FontSize="14" FontAttributes="Bold" TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
-                <Entry x:Name="ProxyEntry" Placeholder="user:pass@ip:port" ClearButtonVisibility="WhileEditing" />
-                <Label Text="Format: user:password@host:port" FontSize="11" Margin="0,-10,0,0" TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource White}}" />
+            <Label Grid.Row="2" Grid.Column="0" 
+                   Text="Proxy (Optional):" VerticalOptions="Center" FontSize="14" FontAttributes="Bold" 
+                   TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
+            <Entry Grid.Row="2" Grid.Column="1" 
+                   x:Name="ProxyEntry" Placeholder="user:pass@ip:port" ClearButtonVisibility="WhileEditing" />
 
-                <Label Text="Operation Mode" FontSize="14" FontAttributes="Bold" Margin="0,5,0,0" TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
-                <HorizontalStackLayout Spacing="10" VerticalOptions="Center">
-                    <Label Text="Dictation" VerticalOptions="Center" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"/>
-                    <Switch x:Name="ModeSwitch" Toggled="OnModeToggled"/>
-                    <Label Text="Command Mode (AI)" VerticalOptions="Center" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"/>
-                </HorizontalStackLayout>
+            <Label Grid.Row="3" Grid.Column="0" 
+                   Text="Operation Mode:" VerticalOptions="Center" FontSize="14" FontAttributes="Bold" 
+                   TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
 
-                <VerticalStackLayout x:Name="SystemPromptContainer" IsVisible="False" Spacing="5">
-                    <Label Text="System Prompt" FontSize="14" FontAttributes="Bold" Margin="0,5,0,0" TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
+            <Grid Grid.Row="3" Grid.Column="1" ColumnDefinitions="Auto, Auto, Auto" ColumnSpacing="5" VerticalOptions="Center">
+                <Label Grid.Column="0" Text="Dictate" VerticalOptions="Center" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"/>
+                <Switch Grid.Column="1" x:Name="ModeSwitch" Toggled="OnModeToggled"/>
+                <Label Grid.Column="2" Text="Command" VerticalOptions="Center" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"/>
+            </Grid>
 
-                    <Border Stroke="{AppThemeBinding Light={StaticResource Gray300}, Dark={StaticResource Gray600}}"
-                            StrokeThickness="1"
-                            StrokeShape="RoundRectangle 8"
-                            Padding="0">
-                        <Editor x:Name="SystemPromptEditor"
-                                HeightRequest="100"
-                                Placeholder="Enter system prompt here..."
-                                BackgroundColor="Transparent"
-                                Margin="5"/>
-                    </Border>
-                </VerticalStackLayout>
-
-                <Button x:Name="SaveBtn" Text="Save" FontAttributes="Bold" Clicked="OnSaveClicked" HorizontalOptions="Fill" Margin="0,10,0,0"/>
-
-                <Label x:Name="StatusLabel" HorizontalOptions="Center" TextColor="Green" HeightRequest="20"/>
-                <BoxView HeightRequest="1" Color="{StaticResource Gray300}" Margin="0,5"/>
-
+            <VerticalStackLayout Grid.Row="4" Grid.ColumnSpan="2" 
+                                 x:Name="SystemPromptContainer" IsVisible="False" Spacing="5">
+                <Label Text="System Prompt:" FontSize="14" FontAttributes="Bold" 
+                       TextColor="{AppThemeBinding Light={StaticResource MidnightBlue}, Dark={StaticResource White}}" />
+                <Border Stroke="{AppThemeBinding Light={StaticResource Gray300}, Dark={StaticResource Gray600}}"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 8"
+                        Padding="0">
+                    <Editor x:Name="SystemPromptEditor"
+                            HeightRequest="80"
+                            Placeholder="Enter system prompt here..."
+                            BackgroundColor="Transparent"
+                            Margin="5"/>
+                </Border>
             </VerticalStackLayout>
-        </ScrollView>
 
-        <Grid Grid.Row="1" RowDefinitions="Auto, *" Padding="20, 0, 20, 20">
+            <Button Grid.Row="5" Grid.ColumnSpan="2" 
+                    x:Name="SaveBtn" Text="Save" FontAttributes="Bold" Clicked="OnSaveClicked" />
 
-            <Label Text="Log"
-                   Style="{StaticResource Headline}"
-                   FontSize="28"
-                   Margin="0,0,0,10"/>
+            <Label Grid.Row="6" Grid.ColumnSpan="2" 
+                   x:Name="StatusLabel" HorizontalOptions="Center" TextColor="Green" HeightRequest="20"/>
+
+        </Grid>
+
+        <BoxView Grid.Row="0" VerticalOptions="End" HeightRequest="1" Color="{StaticResource Gray300}" Margin="20,0"/>
+
+        <Grid Grid.Row="1" RowDefinitions="Auto, *" Padding="20, 10, 20, 20">
+            <Label Grid.Row="0" Text="Log" Style="{StaticResource Headline}" FontSize="28" Margin="0,0,0,10"/>
 
             <Border Grid.Row="1"
                     Stroke="{AppThemeBinding Light={StaticResource Gray400}, Dark={StaticResource Gray500}}"
